@@ -1,0 +1,30 @@
+[package]
+name = "picordm"
+version = "0.1.0"
+authors = ["osdodo <dodomatrix@pm.me>"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ratatui = "0.29.0"
+redis = { version = "0.32.7", features = ["tokio-comp", "aio", "json", "tokio-native-tls-comp"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+anyhow = "1.0.100"
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
+tokio = { version = "1.48.0", features = ["full"] }
+tui-textarea = "0.7.0"
+regex = "1.12.2"
+syntect = { version = "5.3.0", features = ["default-fancy"] }
+arboard = "3.6.1"
+chrono = "0.4.42"
+log = "0.4"
+simplelog = "0.12"
+dirs = "6.0"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
