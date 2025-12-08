@@ -55,7 +55,7 @@ fn handle_json_editor(app: &mut App<'_>, key: KeyEvent) {
 
 async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
     match key.code {
-        KeyCode::Char('q') => true,
+        KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Char('b') => {
             if !(app.current_screen == CurrentScreen::Dashboard && app.is_searching_keys) {
                 if app.current_screen == CurrentScreen::Dashboard {

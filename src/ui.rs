@@ -300,7 +300,7 @@ fn render_json_editor(frame: &mut Frame, app: &mut App, area: Rect) {
 
             // Add cursor indicator to title
             let title = format!(
-                "JSON Editor (Esc: Cancel, Ctrl+s: Save, q: Quit) - Ln {}, Col {}",
+                "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit) - Ln {}, Col {}",
                 cursor_row + 1,
                 cursor_col + 1
             );
@@ -334,7 +334,7 @@ fn render_json_editor(frame: &mut Frame, app: &mut App, area: Rect) {
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
                     .title(Span::styled(
-                        "JSON Editor (Esc: Cancel, Ctrl+s: Save, q: Quit)",
+                        "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit)",
                         Style::default()
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
@@ -718,7 +718,7 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let status_text = match app.current_screen {
         CurrentScreen::NewConnectionForm => "Esc: Cancel | Tab: Next | Enter: Toggle/Save",
         CurrentScreen::ConnectionList => {
-            "n: New | e: Edit | i: Import | Delete/Backspace: Delete | j/k: Nav | Enter: Connect | q: Quit"
+            "n: New | e: Edit | i: Import | Delete/Backspace: Delete | j/k: Nav | Enter: Connect | Ctrl+q: Quit"
         }
         CurrentScreen::Dashboard => {
             if app.is_delete_confirmation_open {
@@ -733,8 +733,8 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                 "Space: Select | a: Select All | Enter: View | /: Search | d: DB | Ctrl+r: Refresh | b: Back"
             }
         }
-        CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | j/k: Scroll | q: Quit",
-        CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | q: Quit",
+        CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | j/k: Scroll | Ctrl+q: Quit",
+        CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
     };
 
     let status = format!("Mode: {:?} | {}", app.current_screen, status_text);
