@@ -18,14 +18,9 @@ cargo build --release
 Supported connection string formats:
 
 ```
-redis://:mypassword@localhost:6379
-```
-
-```
 rediss://admin:securepass@prod.redis.com:6380
 ```
 
 ```
 redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni admin:securepass@prod.redis.com
 ```
-

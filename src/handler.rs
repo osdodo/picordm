@@ -334,7 +334,41 @@ async fn handle_dashboard_normal(
     app: &mut App<'_>,
     key: KeyEvent,
 ) -> Result<()> {
+    // Handle delete confirmation dialog
+    if app.is_delete_confirmation_open {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                terminal.draw(|f| ui::draw(f, app))?;
+                app.delete_selected_keys().await?;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.close_delete_confirmation();
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     match key.code {
+        KeyCode::Char(' ') => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.toggle_key_selection();
+            }
+        }
+        KeyCode::Char('a') => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.clear_key_selection();
+                } else {
+                    app.select_all_keys();
+                }
+            }
+        }
+        KeyCode::Char('x') => {
+            if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
+                app.open_delete_confirmation();
+            }
+        }
         KeyCode::Char('d') => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_db_selector();

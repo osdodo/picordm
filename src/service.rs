@@ -253,4 +253,16 @@ impl RedisService {
         })
         .await
     }
+
+    pub async fn delete_key(&self, key: &str) -> Result<()> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                let _: u32 = conn.del(&key).await?;
+                Ok(())
+            }
+        })
+        .await
+    }
 }

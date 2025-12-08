@@ -39,6 +39,8 @@ pub struct App<'a> {
     pub key_list_state: ListState,
     pub key_search_filter: String,
     pub is_searching_keys: bool,
+    pub selected_keys: std::collections::HashSet<String>,
+    pub is_delete_confirmation_open: bool,
 
     // Key value viewer
     pub current_value: String,
@@ -89,6 +91,8 @@ impl<'a> App<'a> {
             key_list_state,
             key_search_filter: String::new(),
             is_searching_keys: false,
+            selected_keys: std::collections::HashSet::new(),
+            is_delete_confirmation_open: false,
             current_value: String::new(),
             is_json_content: false,
             scroll_offset: 0,
@@ -204,6 +208,7 @@ impl<'a> App<'a> {
                 } else {
                     self.key_list_state.select(None);
                 }
+                self.selected_keys.clear(); // Clear selection when refreshing keys
                 self.error_message = None;
             }
             Err(e) => {
@@ -517,6 +522,10 @@ impl<'a> App<'a> {
         self.key_search_filter.clear();
         self.is_searching_keys = false;
 
+        // Reset selection
+        self.selected_keys.clear();
+        self.is_delete_confirmation_open = false;
+
         // Reset database info
         self.db_list.clear();
         self.current_db_index = 0;
@@ -562,6 +571,97 @@ impl<'a> App<'a> {
             self.current_screen = CurrentScreen::ConnectionList;
         }
 
+        Ok(())
+    }
+
+    pub fn toggle_key_selection(&mut self) {
+        if let Some(selected_idx) = self.key_list_state.selected() {
+            let filtered_keys = self.get_filtered_keys();
+            if let Some(key) = filtered_keys.get(selected_idx) {
+                if self.selected_keys.contains(key) {
+                    self.selected_keys.remove(key);
+                } else {
+                    self.selected_keys.insert(key.clone());
+                }
+            }
+        }
+    }
+
+    pub fn select_all_keys(&mut self) {
+        let filtered_keys = self.get_filtered_keys();
+        for key in filtered_keys {
+            self.selected_keys.insert(key);
+        }
+    }
+
+    pub fn clear_key_selection(&mut self) {
+        self.selected_keys.clear();
+    }
+
+    pub fn open_delete_confirmation(&mut self) {
+        if !self.selected_keys.is_empty() {
+            self.is_delete_confirmation_open = true;
+        }
+    }
+
+    pub fn close_delete_confirmation(&mut self) {
+        self.is_delete_confirmation_open = false;
+    }
+
+    pub async fn delete_selected_keys(&mut self) -> Result<()> {
+        if self.selected_keys.is_empty() {
+            return Ok(());
+        }
+
+        let keys_to_delete: Vec<String> = self.selected_keys.iter().cloned().collect();
+        let mut deleted_count = 0;
+        let mut errors = Vec::new();
+
+        for key in &keys_to_delete {
+            match self.redis.delete_key(key).await {
+                Ok(_) => {
+                    deleted_count += 1;
+                }
+                Err(e) => {
+                    errors.push(format!("{}: {}", key, e));
+                }
+            }
+        }
+
+        // Update UI
+        if deleted_count > 0 {
+            // Remove deleted keys from the list
+            self.keys.retain(|k| !keys_to_delete.contains(k));
+            self.selected_keys.clear();
+
+            // Adjust selection
+            if !self.keys.is_empty() {
+                let current_idx = self.key_list_state.selected().unwrap_or(0);
+                let new_idx = current_idx.min(self.keys.len() - 1);
+                self.key_list_state.select(Some(new_idx));
+            } else {
+                self.key_list_state.select(None);
+            }
+
+            // Update server info to reflect new key count
+            let _ = self.load_server_info().await;
+        }
+
+        // Set error or success message
+        if errors.is_empty() {
+            self.error_message = None;
+        } else if deleted_count > 0 {
+            self.error_message = Some(format!(
+                "Deleted {} keys, but {} failed: {}",
+                deleted_count,
+                errors.len(),
+                errors.join(", ")
+            ));
+        } else {
+            self.error_message = Some(format!("Failed to delete keys: {}", errors.join(", ")));
+        }
+
+        self.is_delete_confirmation_open = false;
         Ok(())
     }
 }

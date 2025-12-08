@@ -66,6 +66,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Clear, popup_area);
         render_new_connection_form(frame, app, popup_area);
     }
+
+    // Delete confirmation dialog
+    if app.is_delete_confirmation_open {
+        let popup_area = centered_rect_fixed_height(50, 10, size);
+        frame.render_widget(Clear, popup_area);
+        render_delete_confirmation(frame, app, popup_area);
+    }
 }
 
 fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -554,12 +561,38 @@ fn render_keys_list(frame: &mut Frame, app: &mut App, area: Rect) {
         let items: Vec<ListItem> = filtered_keys
             .iter()
             .map(|key| {
-                ListItem::new(Line::from(vec![Span::raw(key)]))
-                    .style(Style::default().fg(Color::White))
+                let is_selected = app.selected_keys.contains(key);
+                let checkbox = if is_selected {
+                    Span::styled(
+                        "[✓] ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
+                };
+                
+                let key_style = if is_selected {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                ListItem::new(Line::from(vec![
+                    checkbox,
+                    Span::styled(key, key_style),
+                ]))
             })
             .collect();
 
-        let keys_title = format!("Keys ({})", filtered_keys.len());
+        let selected_count = app.selected_keys.len();
+        let keys_title = if selected_count > 0 {
+            format!("Keys ({}) - {} selected", filtered_keys.len(), selected_count)
+        } else {
+            format!("Keys ({})", filtered_keys.len())
+        };
+
         let list = List::new(items)
             .block(
                 Block::default()
@@ -688,12 +721,16 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
             "n: New | e: Edit | i: Import | Delete/Backspace: Delete | j/k: Nav | Enter: Connect | q: Quit"
         }
         CurrentScreen::Dashboard => {
-            if app.is_db_selector_open {
+            if app.is_delete_confirmation_open {
+                "Y: Confirm Delete | N/Esc: Cancel"
+            } else if app.is_db_selector_open {
                 "Esc: Close | j/k: Nav | Enter: Select Database"
             } else if app.is_searching_keys {
                 "Esc: Exit Search | Enter: Select | Arrow: Navigate"
+            } else if !app.selected_keys.is_empty() {
+                "Space: Toggle | a: Select All | Ctrl+a: Clear | x: Delete | Enter: View | /: Search"
             } else {
-                "b: Back | d: DB | j/k: Nav | Enter: View | Ctrl+r: Refresh | /: Search | q: Quit"
+                "Space: Select | a: Select All | Enter: View | /: Search | d: DB | Ctrl+r: Refresh | b: Back"
             }
         }
         CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | j/k: Scroll | q: Quit",
@@ -1275,4 +1312,74 @@ fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(Line::from(vec![Span::styled(
+            "⚠ Confirm Delete",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::LightRed))
+        .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(3), // Message
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Buttons hint
+        ])
+        .split(area);
+
+    let selected_count = app.selected_keys.len();
+    let message = if selected_count == 1 {
+        "Are you sure you want to delete 1 key?".to_string()
+    } else {
+        format!("Are you sure you want to delete {} keys?", selected_count)
+    };
+
+    let message_widget = Paragraph::new(vec![
+        Line::from(Span::styled(
+            message,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "This action cannot be undone.",
+            Style::default().fg(Color::Yellow),
+        )),
+    ])
+    .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(message_widget, chunks[0]);
+
+    let buttons_hint = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[Y]",
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Yes, delete  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "[N/Esc]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Cancel", Style::default().fg(Color::White)),
+    ]))
+    .alignment(ratatui::layout::Alignment::Center);
+
+    frame.render_widget(buttons_hint, chunks[2]);
 }
