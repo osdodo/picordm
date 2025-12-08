@@ -37,3 +37,9 @@ rediss://admin:securepass@prod.redis.com:6380
 ```
 redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni admin:securepass@prod.redis.com
 ```
+
+## TODO
+
+- [ ] Command line interface support
+- [ ] Import and export functionality
+- [ ] Quick connection switching
