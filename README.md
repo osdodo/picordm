@@ -2,6 +2,20 @@
 
 A lightweight Redis terminal management tool built with Rust and Ratatui.
 
+<picture>
+ <img alt="screenshot" src="screenshots/1.jpg">
+</picture>
+
+## Features
+
+- 🪶 **Lightweight** - Minimal memory footprint and fast performance
+- �  **Connection Management** - Save and manage multiple Redis connections with TLS/SSL support
+- � **服Quick Import** - One-click import from clipboard connection strings (shortcut `i`)
+- � **Ke库y Browser** - Real-time search and filter Redis keys with batch selection and deletion
+- 📊 **Server Monitoring** - Display uptime, memory usage, connected clients, and key counts
+- 💾 **Database Switching** - Seamlessly switch between Redis databases
+
+
 ## Installation and Usage
 
 ```bash
