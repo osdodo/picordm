@@ -10,6 +10,7 @@ use ratatui::{
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, CurrentScreen};
 use crate::connection::FormField;
@@ -97,7 +98,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled("Clients: ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     format!("{}", info.connected_clients),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(Color::Rgb(147, 112, 219)),
                 ),
                 Span::raw("  |  "),
                 Span::styled("Keys: ", Style::default().fg(Color::Gray)),
@@ -484,14 +485,19 @@ fn render_key_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         ])
         .split(area);
 
-    render_search_box(frame, app, chunks[0]);
+    let cursor_pos = render_search_box(frame, app, chunks[0]);
     render_keys_list(frame, app, chunks[1]);
     render_db_selector(frame, app, chunks[2]);
+    
+    // Set cursor position if searching
+    if let Some((x, y)) = cursor_pos {
+        frame.set_cursor_position(ratatui::layout::Position { x, y });
+    }
 }
 
-fn render_search_box(frame: &mut Frame, app: &App, area: Rect) {
+fn render_search_box(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let search_border_color = if app.is_searching_keys {
-        Color::Cyan
+        Color::Rgb(147, 112, 219)
     } else {
         Color::Rgb(80, 90, 110)
     };
@@ -527,6 +533,16 @@ fn render_search_box(frame: &mut Frame, app: &App, area: Rect) {
     );
 
     frame.render_widget(search_input, area);
+    
+    // Return cursor position if actively searching
+    if app.is_searching_keys {
+        Some((
+            area.x + 1 + app.key_search_filter.width() as u16,
+            area.y + 1,
+        ))
+    } else {
+        None
+    }
 }
 
 fn render_keys_list(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -632,7 +648,7 @@ fn render_db_selector(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let border_color = if app.is_db_selector_open {
-        Color::Cyan
+        Color::Rgb(147, 112, 219)
     } else {
         Color::Rgb(80, 90, 110)
     };
@@ -698,7 +714,7 @@ fn render_db_selector(frame: &mut Frame, app: &mut App, area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
                     .style(Style::default().bg(Color::Rgb(30, 30, 40))),
             )
             .highlight_style(
@@ -760,13 +776,16 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         .title(Line::from(vec![Span::styled(
             title,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )]))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Rgb(80, 90, 110)));
     frame.render_widget(block, area);
+
+    // Track cursor position for active field
+    let mut cursor_pos: Option<(u16, u16)> = None;
 
     let constraints = if app.connection_form.validation_error.is_some() {
         vec![
@@ -809,7 +828,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut chunk_idx = 1; // Skip first spacing chunk
 
-    let active_border_color = Color::Cyan;
+    let active_border_color = Color::Rgb(147, 112, 219); // Medium Purple
     let inactive_border_color = Color::Rgb(80, 90, 110);
     let required_color = Color::LightRed;
 
@@ -821,7 +840,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = &app.connection_form.name;
 
         let title_span = Line::from(vec![
@@ -861,6 +884,15 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                chunks[chunk_idx].x + 1 + value.width() as u16,
+                chunks[chunk_idx].y + 1,
+            ));
+        }
+        
         chunk_idx += 1;
     }
 
@@ -878,7 +910,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = &app.connection_form.host;
 
         let title_span = Line::from(vec![
@@ -906,6 +942,14 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, host_port_chunks[0]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                host_port_chunks[0].x + 1 + value.width() as u16,
+                host_port_chunks[0].y + 1,
+            ));
+        }
 
         // Render Port
         let is_active = app.connection_form.editing_field == FormField::Port;
@@ -914,7 +958,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = &app.connection_form.port;
 
         let title_span = Line::from(vec![
@@ -942,6 +990,15 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, host_port_chunks[1]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                host_port_chunks[1].x + 1 + value.width() as u16,
+                host_port_chunks[1].y + 1,
+            ));
+        }
+        
         chunk_idx += 2; // Skip spacer
     }
 
@@ -959,7 +1016,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = app.connection_form.username.as_deref().unwrap_or("");
 
         let title_span = Line::from(vec![
@@ -989,6 +1050,14 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, user_pass_chunks[0]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                user_pass_chunks[0].x + 1 + value.width() as u16,
+                user_pass_chunks[0].y + 1,
+            ));
+        }
 
         // Render Password
         let is_active = app.connection_form.editing_field == FormField::Password;
@@ -997,7 +1066,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = app.connection_form.password.as_deref().unwrap_or("");
 
         let title_span = Line::from(vec![
@@ -1027,6 +1100,15 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, user_pass_chunks[1]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                user_pass_chunks[1].x + 1 + value.width() as u16,
+                user_pass_chunks[1].y + 1,
+            ));
+        }
+        
         chunk_idx += 2; // Skip spacer
     }
 
@@ -1045,7 +1127,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
 
         let title_span = Line::from(vec![Span::styled(
             "Use TLS",
@@ -1086,7 +1172,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
 
         let title_span = Line::from(vec![Span::styled(
             "Allow Insecure TLS",
@@ -1129,7 +1219,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = &app.connection_form.sni;
 
         let title_span = Line::from(vec![
@@ -1159,6 +1253,15 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                chunks[chunk_idx].x + 1 + value.width() as u16,
+                chunks[chunk_idx].y + 1,
+            ));
+        }
+        
         chunk_idx += 1;
     }
 
@@ -1170,7 +1273,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             inactive_border_color
         };
-        let title_color = if is_active { Color::Cyan } else { Color::White };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
         let value = &app.connection_form.db_aliases;
 
         let title_span = Line::from(vec![
@@ -1200,6 +1307,15 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
+        
+        // Set cursor position if this field is active
+        if is_active {
+            cursor_pos = Some((
+                chunks[chunk_idx].x + 1 + value.width() as u16,
+                chunks[chunk_idx].y + 1,
+            ));
+        }
+        
         chunk_idx += 2; // Skip spacer
     }
 
@@ -1246,7 +1362,10 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let is_submit_focused = app.connection_form.editing_field == FormField::Submit;
     let (submit_fg, submit_border) = if is_submit_focused {
-        (Color::Cyan, Color::Cyan)
+        (
+            Color::Rgb(147, 112, 219),
+            Color::Rgb(147, 112, 219),
+        )
     } else {
         (Color::DarkGray, Color::Rgb(80, 90, 110))
     };
@@ -1271,6 +1390,11 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(submit_btn, button_area);
+
+    // Render cursor for active text input field
+    if let Some((x, y)) = cursor_pos {
+        frame.set_cursor_position(ratatui::layout::Position { x, y });
+    }
 }
 
 #[allow(dead_code)]
@@ -1374,7 +1498,7 @@ fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             "[N/Esc]",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::Rgb(147, 112, 219))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Cancel", Style::default().fg(Color::White)),
