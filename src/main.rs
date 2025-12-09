@@ -50,10 +50,16 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App<'_>) -> Resul
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key_event(terminal, &mut app, key).await? {
-                    return Ok(());
+            match event::read()? {
+                Event::Key(key) => {
+                    if handle_key_event(terminal, &mut app, key).await? {
+                        return Ok(());
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    handler::handle_mouse_event(terminal, &mut app, mouse).await?;
+                }
+                _ => {}
             }
         } else {
             if app.is_connecting
