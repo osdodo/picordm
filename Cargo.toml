@@ -1,6 +1,6 @@
 [package]
 name = "picordm"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["osdodo <dodomatrix@pm.me>"]
 edition = "2024"
 

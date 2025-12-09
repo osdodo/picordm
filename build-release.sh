@@ -3,7 +3,7 @@
 # Build script for macOS release
 set -e
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 APP_NAME="picordm"
 
 # Detect architecture
@@ -42,10 +42,3 @@ shasum -a 256 "${RELEASE_DIR}.tar.gz"
 
 # Clean up temporary directory
 rm -rf "$RELEASE_DIR"
-
-echo ""
-echo "📤 Next steps:"
-echo "1. Create a new release on GitHub: https://github.com/osdodo/picordm/releases/new"
-echo "2. Tag version: v${VERSION}"
-echo "3. Upload: target/release/${RELEASE_DIR}.tar.gz"
-echo "4. Copy the SHA256 hash above for your Homebrew formula"
