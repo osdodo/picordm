@@ -12,7 +12,7 @@ pub async fn handle_key_event(
     key: KeyEvent,
 ) -> Result<bool> {
     if app.current_screen == CurrentScreen::JsonEditor {
-        handle_json_editor(app, key);
+        handle_json_editor(terminal, app, key).await?;
         return Ok(false);
     }
 
@@ -30,6 +30,9 @@ pub async fn handle_key_event(
         CurrentScreen::Dashboard | CurrentScreen::KeyContent => {
             handle_dashboard_and_key_content(terminal, app, key).await?;
         }
+        CurrentScreen::CommandMode => {
+            handle_command_mode(terminal, app, key).await?;
+        }
         CurrentScreen::JsonEditor => {
             // Already handled above
         }
@@ -38,31 +41,44 @@ pub async fn handle_key_event(
     Ok(false)
 }
 
-fn handle_json_editor(app: &mut App<'_>, key: KeyEvent) {
+async fn handle_json_editor(
+    terminal: &mut DefaultTerminal,
+    app: &mut App<'_>,
+    key: KeyEvent,
+) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.current_screen = CurrentScreen::KeyContent;
         }
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.current_value = app.json_editor.lines().join("\n");
+            app.cached_highlighted_json = None; // Clear cache after editing
+            terminal.draw(|f| ui::draw(f, app))?;
+            app.save_current_value().await?;
             app.current_screen = CurrentScreen::KeyContent;
         }
         _ => {
             app.json_editor.input(key);
         }
     }
+    Ok(())
 }
 
 async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Char('b') => {
-            if !(app.current_screen == CurrentScreen::Dashboard && app.is_searching_keys) {
-                if app.current_screen == CurrentScreen::Dashboard {
-                    app.disconnect_and_return_to_list().await;
-                } else if app.current_screen == CurrentScreen::KeyContent {
-                    app.current_screen = CurrentScreen::Dashboard;
-                }
+            if app.is_searching_keys
+                || app.current_screen == CurrentScreen::CommandMode
+                || app.current_screen == CurrentScreen::NewConnectionForm
+            {
+                return false;
+            }
+
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.disconnect_and_return_to_list().await;
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                app.current_screen = CurrentScreen::Dashboard;
             }
             false
         }
@@ -86,7 +102,13 @@ fn handle_connection_form(app: &mut App<'_>, key: KeyEvent) -> Result<()> {
             handle_form_enter(app)?;
         }
         KeyCode::Char(c) => {
-            handle_form_char_input(app, c);
+            // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER)
+            {
+                handle_form_char_input(app, c);
+            }
         }
         KeyCode::Backspace => {
             handle_form_backspace(app);
@@ -185,6 +207,14 @@ async fn handle_connection_list(
     app: &mut App<'_>,
     key: KeyEvent,
 ) -> Result<()> {
+    // Only respond to keys without modifier keys
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::ALT)
+        || key.modifiers.contains(KeyModifiers::SUPER)
+    {
+        return Ok(());
+    }
+
     match key.code {
         KeyCode::Char('n') => {
             app.current_screen = CurrentScreen::NewConnectionForm;
@@ -197,20 +227,22 @@ async fn handle_connection_list(
             terminal.draw(|f| ui::draw(f, app))?;
             app.quick_import_from_clipboard().await?;
         }
+        KeyCode::Down => {
+            app.next_connection();
+        }
+        KeyCode::Up => {
+            app.previous_connection();
+        }
         KeyCode::Delete | KeyCode::Backspace => {
             if let Err(e) = app.delete_selected_connection() {
                 app.error_message = Some(format!("Failed to delete connection: {}", e));
             }
         }
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.next_connection();
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.previous_connection();
-        }
         KeyCode::Enter => {
             app.start_connection();
         }
+        // Ignore all other character inputs to prevent unexpected actions during paste.
+        KeyCode::Char(_) => {}
         _ => {}
     }
     Ok(())
@@ -240,10 +272,10 @@ async fn handle_db_selector(
         KeyCode::Esc => {
             app.is_db_selector_open = false;
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down => {
             app.next_db();
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up => {
             app.previous_db();
         }
         KeyCode::Enter => {
@@ -262,6 +294,44 @@ async fn handle_db_selector(
     Ok(())
 }
 
+async fn handle_command_mode(
+    terminal: &mut DefaultTerminal,
+    app: &mut App<'_>,
+    key: KeyEvent,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            app.toggle_command_mode();
+        }
+        KeyCode::Down => {
+            app.scroll_down();
+        }
+        KeyCode::Up => {
+            app.scroll_up();
+        }
+        KeyCode::Char(c) => {
+            // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER)
+            {
+                app.command_input.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            app.command_input.pop();
+
+        }
+        KeyCode::Enter => {
+            terminal.draw(|f| ui::draw(f, app))?;
+            app.execute_command().await?;
+            // Stay in command mode, allowing continuous command input.
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 async fn handle_key_search(
     terminal: &mut DefaultTerminal,
     app: &mut App<'_>,
@@ -271,10 +341,32 @@ async fn handle_key_search(
         KeyCode::Esc => {
             app.is_searching_keys = false;
         }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Support Ctrl+a (select all) in search mode
+            let filtered_keys = app.get_filtered_keys();
+            let all_selected = !filtered_keys.is_empty() 
+                && filtered_keys.iter().all(|k| app.selected_keys.contains(k));
+            
+            if all_selected {
+                app.clear_key_selection();
+            } else {
+                app.select_all_keys();
+            }
+        }
+        KeyCode::Char(' ') => {
+            // Support space key (toggle selection) in search mode
+            app.toggle_key_selection();
+        }
         KeyCode::Char(c) => {
-            app.key_search_filter.push(c);
-            if !app.get_filtered_keys().is_empty() {
-                app.key_list_state.select(Some(0));
+            // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER)
+            {
+                app.key_search_filter.push(c);
+                if !app.get_filtered_keys().is_empty() {
+                    app.key_list_state.select(Some(0));
+                }
             }
         }
         KeyCode::Backspace => {
@@ -294,7 +386,7 @@ async fn handle_key_search(
                             app.key_list_state.select(Some(original_idx));
                             app.is_loading_value = true;
                             terminal.draw(|f| ui::draw(f, app))?;
-                            app.fetch_value().await?;
+                            app.fetch_value(true).await?;
                         }
                     }
                 }
@@ -336,6 +428,12 @@ async fn handle_dashboard_normal(
 ) -> Result<()> {
     // Handle delete confirmation dialog
     if app.is_delete_confirmation_open {
+        // Ignore input with modifier keys
+        if key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::SUPER)
+        {
+            return Ok(());
+        }
+
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 terminal.draw(|f| ui::draw(f, app))?;
@@ -350,54 +448,24 @@ async fn handle_dashboard_normal(
     }
 
     match key.code {
-        KeyCode::Char(' ') => {
+        // Special handling for the Ctrl key combination (must be before wildcards)
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.current_screen == CurrentScreen::Dashboard {
-                app.toggle_key_selection();
-            }
-        }
-        KeyCode::Char('a') => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Toggle: if all keys are selected, clear selection; otherwise select all
+                let filtered_keys = app.get_filtered_keys();
+                let all_selected = !filtered_keys.is_empty() 
+                    && filtered_keys.iter().all(|k| app.selected_keys.contains(k));
+                
+                if all_selected {
                     app.clear_key_selection();
                 } else {
                     app.select_all_keys();
                 }
             }
         }
-        KeyCode::Char('x') => {
-            if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
-                app.open_delete_confirmation();
-            }
-        }
-        KeyCode::Char('d') => {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_db_selector();
-            }
-        }
-        KeyCode::Char('/') => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                app.is_searching_keys = true;
-            }
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                app.next_key();
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                app.scroll_down();
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                app.previous_key();
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                app.scroll_up();
-            }
-        }
-        KeyCode::Enter => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                app.is_loading_value = true;
-                terminal.draw(|f| ui::draw(f, app))?;
-                app.fetch_value().await?;
             }
         }
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -405,11 +473,65 @@ async fn handle_dashboard_normal(
             terminal.draw(|f| ui::draw(f, app))?;
             let _ = app.load_server_info().await;
         }
+        // Ignore other inputs with modifier keys
+        KeyCode::Char(_)
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                || key.modifiers.contains(KeyModifiers::ALT)
+                || key.modifiers.contains(KeyModifiers::SUPER) => {}
+        // Handling regular buttons
+        KeyCode::Char(' ') => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.toggle_key_selection();
+            }
+        }
+
+        KeyCode::Delete | KeyCode::Backspace => {
+            if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
+                app.open_delete_confirmation();
+            }
+        }
+        KeyCode::Char('/') => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.is_searching_keys = true;
+            }
+        }
+        KeyCode::Char('>') => {
+            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+                app.toggle_command_mode();
+            }
+        }
+        KeyCode::Down => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.next_key();
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                app.scroll_down();
+            }
+        }
+        KeyCode::Up => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.previous_key();
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                app.scroll_up();
+            }
+        }
         KeyCode::Char('e') => {
-            if app.current_screen == CurrentScreen::KeyContent && app.is_json_content {
+            if (app.current_screen == CurrentScreen::KeyContent
+                || app.current_screen == CurrentScreen::Dashboard)
+                && app.is_json_content
+                && !app.current_value.is_empty()
+            {
                 app.current_screen = CurrentScreen::JsonEditor;
             }
         }
+        KeyCode::Enter => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.is_loading_value = true;
+                terminal.draw(|f| ui::draw(f, app))?;
+                app.fetch_value(true).await?;
+            }
+        }
+        // Ignore all other character inputs to prevent unexpected actions during paste.
+        KeyCode::Char(_) => {}
         _ => {}
     }
     Ok(())
@@ -455,6 +577,9 @@ fn handle_mouse_scroll_down(app: &mut App<'_>) {
                 app.next_key();
             }
         }
+        CurrentScreen::CommandMode => {
+            app.scroll_down();
+        }
         CurrentScreen::KeyContent => {
             app.scroll_down();
         }
@@ -473,6 +598,9 @@ fn handle_mouse_scroll_up(app: &mut App<'_>) {
             } else {
                 app.previous_key();
             }
+        }
+        CurrentScreen::CommandMode => {
+            app.scroll_up();
         }
         CurrentScreen::KeyContent => {
             app.scroll_up();
@@ -552,22 +680,29 @@ async fn handle_keys_list_click(
     // Search box is 3 lines, keys list starts after that
     let search_box_height = 3;
 
-    if row > search_box_height && row < search_box_height + 20 {
+    if row > search_box_height {
         // Approximate keys list area
         let list_row = (row - search_box_height - 1) as usize; // -1 for border
         let filtered_keys = app.get_filtered_keys();
 
         if list_row < filtered_keys.len() {
-            // Update selection
-            app.key_list_state.select(Some(list_row));
+            // Get the selected key from filtered list
+            let selected_key = &filtered_keys[list_row];
+            
+            // Find the original index in the full keys list
+            if let Some(original_idx) = app.keys.iter().position(|k| k == selected_key) {
+                // Update selection to original index
+                app.key_list_state.select(Some(original_idx));
 
-            // Load value for both Dashboard and KeyContent screens
-            if app.current_screen == CurrentScreen::Dashboard
-                || app.current_screen == CurrentScreen::KeyContent
-            {
+                // Exit command mode if active
+                if app.current_screen == CurrentScreen::CommandMode {
+                    app.toggle_command_mode();
+                }
+
+                // Load value and switch to KeyContent screen
                 app.is_loading_value = true;
                 terminal.draw(|f| ui::draw(f, app))?;
-                app.fetch_value().await?;
+                app.fetch_value(true).await?;
             }
         }
     }

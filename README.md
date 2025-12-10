@@ -14,6 +14,8 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 - 🔍 **Key Browser** - Real-time search and filter Redis keys with batch selection and deletion
 - 📊 **Server Monitoring** - Display uptime, memory usage, connected clients, and key counts
 - 💾 **Database Switching** - Seamlessly switch between Redis databases
+- ⌨️ **Command Interface** - Execute Redis commands directly in the TUI with `>` shortcut
+
 
 ## Installation and Usage
 
@@ -22,7 +24,9 @@ cargo build --release
 ./target/release/picordm
 ```
 
-## Quick Import Connection (Shortcut `i`)
+## Note
+
+### Quick Import Connection (Shortcut `i`)
 
 1. Copy a Redis connection string to your clipboard
 2. Press `i` key in the connection list interface
@@ -38,8 +42,18 @@ rediss://admin:securepass@prod.redis.com:6380
 redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni admin:securepass@prod.redis.com
 ```
 
+### Copy Text
+
+To copy text from the interface, use your terminal's text selection feature:
+- **macOS (iTerm2/Terminal)**: Hold `Option/Alt` key and select text with mouse, then `Cmd+C` to copy
+- **Linux**: Hold `Shift` key and select text with mouse, then `Ctrl+Shift+C` to copy
+- **Windows**: Hold `Shift` key and select text with mouse, then right-click to copy
+
+### Execute Redis Commands (CLI Mode)
+- Press `>` to enter command mode (switches to CLI interface)
+- Type any Redis command directly (e.g., `GET mykey`, `SET key value`, `KEYS *`, `DBSIZE`, `INFO`)
+
 ## TODO
 
-- [ ] Command line interface support
 - [ ] Import and export functionality
 - [ ] Quick connection switching

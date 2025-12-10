@@ -214,11 +214,14 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
     // Sidebar
     if app.current_screen == CurrentScreen::ConnectionList {
         render_connection_list(frame, app, chunks[0]);
+        render_connection_content(frame, app, chunks[1]);
     } else {
         render_key_sidebar(frame, app, chunks[0]);
+        render_content_with_command(frame, app, chunks[1]);
     }
+}
 
-    // Content: Value Viewer with scrolling and syntax highlighting
+fn render_connection_content(frame: &mut Frame, _app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -229,16 +232,44 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ));
-    let block = if app.is_json_content && app.current_screen == CurrentScreen::KeyContent {
-        block.title(Span::styled(
-            "View (Press 'e' to edit | j/k to scroll)",
+
+    let paragraph = Paragraph::new("Select a connection to start")
+        .block(block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn render_content_with_command(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Render content area directly (command input is integrated inside)
+    render_content_area(frame, app, area);
+}
+
+fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
+    // If there's command output or in command mode, show CLI interface
+    let show_cli_interface = !app.command_output.is_empty() || app.current_screen == CurrentScreen::CommandMode;
+
+    if show_cli_interface {
+        render_cli_ui(frame, app, area);
+        return;
+    }
+
+    // Otherwise show key value viewer
+    let title = if !app.current_value.is_empty() && app.is_json_content {
+        "View (Press 'e' to edit | ↑↓ to scroll)"
+    } else {
+        "View"
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+        .title(Span::styled(
+            title,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        block
-    };
+        ));
 
     if app.is_loading_value
         && (app.current_screen == CurrentScreen::Dashboard
@@ -257,39 +288,73 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         let paragraph = Paragraph::new(loading_text)
             .block(block)
             .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(paragraph, chunks[1]);
+        frame.render_widget(paragraph, area);
     } else if let Some(err) = &app.error_message {
+        // Display error messages only in non-CLI mode
         let paragraph = Paragraph::new(format!("Error: {}", err))
             .block(block)
             .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, chunks[1]);
-    } else if app.current_screen == CurrentScreen::ConnectionList {
-        let paragraph = Paragraph::new("Select a connection to start")
-            .block(block)
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, chunks[1]);
-    } else if app.is_json_content {
-        match highlight_json_with_syntect(&app.current_value) {
-            Ok(lines) => {
-                let paragraph = Paragraph::new(lines)
-                    .block(block)
-                    .scroll((app.scroll_offset, 0));
-                frame.render_widget(paragraph, chunks[1]);
+        frame.render_widget(paragraph, area);
+    } else if !app.current_value.is_empty() && app.is_json_content {
+        // Clamp scroll offset to valid range
+        let inner_height = area.height.saturating_sub(1); // Account for borders
+        let content_lines = app.current_value.lines().count() as u16;
+        if content_lines > inner_height {
+            let max_scroll = content_lines.saturating_sub(inner_height);
+            if app.scroll_offset > max_scroll {
+                app.scroll_offset = max_scroll;
             }
-            Err(_) => {
-                let paragraph = Paragraph::new(app.current_value.clone())
-                    .block(block)
-                    .scroll((app.scroll_offset, 0))
-                    .wrap(Wrap { trim: true });
-                frame.render_widget(paragraph, chunks[1]);
+        } else {
+            app.scroll_offset = 0;
+        }
+
+        // Display key-value pairs in JSON format
+        // Use cached highlighted JSON if available, otherwise generate and cache it
+        if app.cached_highlighted_json.is_none() {
+            if let Ok(lines) = highlight_json_with_syntect(&app.current_value) {
+                app.cached_highlighted_json = Some(lines);
             }
         }
-    } else {
+
+        if let Some(lines) = &app.cached_highlighted_json {
+            let paragraph = Paragraph::new(lines.clone())
+                .block(block)
+                .scroll((app.scroll_offset, 0));
+            frame.render_widget(paragraph, area);
+        } else {
+            let paragraph = Paragraph::new(app.current_value.clone())
+                .block(block)
+                .scroll((app.scroll_offset, 0))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
+    } else if !app.current_value.is_empty() {
+        // Clamp scroll offset to valid range
+        let inner_height = area.height.saturating_sub(1); // Account for borders
+        let content_lines = app.current_value.lines().count() as u16;
+        if content_lines > inner_height {
+            let max_scroll = content_lines.saturating_sub(inner_height);
+            if app.scroll_offset > max_scroll {
+                app.scroll_offset = max_scroll;
+            }
+        } else {
+            app.scroll_offset = 0;
+        }
+
+        // Display key-value pairs in plain text format
         let paragraph = Paragraph::new(app.current_value.clone())
             .block(block)
             .scroll((app.scroll_offset, 0))
             .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, chunks[1]);
+        frame.render_widget(paragraph, area);
+    } else {
+        // Default prompt
+        let paragraph =
+            Paragraph::new("Select a key to view its value or press '>' to execute a command")
+                .block(block)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(paragraph, area);
     }
 }
 
@@ -488,7 +553,7 @@ fn render_key_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let cursor_pos = render_search_box(frame, app, chunks[0]);
     render_keys_list(frame, app, chunks[1]);
     render_db_selector(frame, app, chunks[2]);
-    
+
     // Set cursor position if searching
     if let Some((x, y)) = cursor_pos {
         frame.set_cursor_position(ratatui::layout::Position { x, y });
@@ -533,7 +598,7 @@ fn render_search_box(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u
     );
 
     frame.render_widget(search_input, area);
-    
+
     // Return cursor position if actively searching
     if app.is_searching_keys {
         Some((
@@ -542,6 +607,139 @@ fn render_search_box(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u
         ))
     } else {
         None
+    }
+}
+
+fn render_cli_ui(frame: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Command input
+            Constraint::Min(1),    // Output display
+        ])
+        .split(area);
+
+    render_command_input(frame, app, chunks[0]);
+    render_command_output(frame, app, chunks[1]);
+}
+
+fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
+    let title = if app.current_screen == CurrentScreen::CommandMode {
+        "Command Input (Enter: Execute | Esc: Exit)"
+    } else {
+        "Command Input (Press '>' to enter command mode)"
+    };
+
+    let border_color = if app.current_screen == CurrentScreen::CommandMode {
+        Color::Rgb(147, 112, 219)
+    } else {
+        Color::Rgb(80, 90, 110)
+    };
+
+    let input_content = if app.current_screen == CurrentScreen::CommandMode {
+        format!("> {}", app.command_input)
+    } else {
+        "> ".to_string()
+    };
+
+    let input_widget = Paragraph::new(input_content)
+        .style(Style::default().fg(Color::White))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .title(Span::styled(
+                    title,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )),
+        );
+
+    frame.render_widget(input_widget, area);
+
+    // Set cursor position if in command mode
+    if app.current_screen == CurrentScreen::CommandMode {
+        let cursor_x = area.x + 3 + app.command_input.width() as u16; // "> " + input
+        let cursor_y = area.y + 1;
+        
+        if cursor_x < area.right() && cursor_y < area.bottom() {
+            frame.set_cursor_position(ratatui::layout::Position {
+                x: cursor_x,
+                y: cursor_y,
+            });
+        }
+    }
+}
+
+fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
+    let title = if app.command_output.is_empty() {
+        "Command Output"
+    } else if app.is_json_content {
+        "Command Output (↑↓ to scroll)"
+    } else {
+        "Command Output (↑↓ to scroll)"
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    if app.command_output.is_empty() {
+        let paragraph = Paragraph::new("No command executed yet")
+            .block(block)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(paragraph, area);
+    } else {
+        // Reuse the exact same logic as render_content_area for value display
+        let inner_height = area.height.saturating_sub(2); // Account for borders
+        let content_lines = app.current_value.lines().count() as u16;
+        
+        if content_lines > inner_height {
+            let max_scroll = content_lines.saturating_sub(inner_height);
+            if app.scroll_offset > max_scroll {
+                app.scroll_offset = max_scroll;
+            }
+        } else {
+            app.scroll_offset = 0;
+        }
+
+        if app.is_json_content {
+            // Use cached highlighted JSON if available, otherwise generate and cache it
+            if app.cached_highlighted_json.is_none() {
+                if let Ok(lines) = highlight_json_with_syntect(&app.current_value) {
+                    app.cached_highlighted_json = Some(lines);
+                }
+            }
+
+            if let Some(lines) = &app.cached_highlighted_json {
+                let paragraph = Paragraph::new(lines.clone())
+                    .block(block)
+                    .scroll((app.scroll_offset, 0));
+                frame.render_widget(paragraph, area);
+            } else {
+                let paragraph = Paragraph::new(app.current_value.clone())
+                    .block(block)
+                    .scroll((app.scroll_offset, 0))
+                    .wrap(Wrap { trim: true });
+                frame.render_widget(paragraph, area);
+            }
+        } else {
+            // Display plain text with scrolling
+            let paragraph = Paragraph::new(app.current_value.clone())
+                .block(block)
+                .scroll((app.scroll_offset, 0))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
     }
 }
 
@@ -588,23 +786,24 @@ fn render_keys_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
                 };
-                
+
                 let key_style = if is_selected {
                     Style::default().fg(Color::Green)
                 } else {
                     Style::default().fg(Color::White)
                 };
 
-                ListItem::new(Line::from(vec![
-                    checkbox,
-                    Span::styled(key, key_style),
-                ]))
+                ListItem::new(Line::from(vec![checkbox, Span::styled(key, key_style)]))
             })
             .collect();
 
         let selected_count = app.selected_keys.len();
         let keys_title = if selected_count > 0 {
-            format!("Keys ({}) - {} selected", filtered_keys.len(), selected_count)
+            format!(
+                "Keys ({}) - {} selected",
+                filtered_keys.len(),
+                selected_count
+            )
         } else {
             format!("Keys ({})", filtered_keys.len())
         };
@@ -656,7 +855,7 @@ fn render_db_selector(frame: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.is_db_selector_open {
         "Database (Esc to close | ↑↓ to navigate | Enter to select)"
     } else {
-        "Database (Press 'd' to select)"
+        "Database (Press 'Ctrl+d' to select)"
     };
 
     let selector_widget = Paragraph::new(display_text)
@@ -734,26 +933,36 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let status_text = match app.current_screen {
         CurrentScreen::NewConnectionForm => "Esc: Cancel | Tab: Next | Enter: Toggle/Save",
         CurrentScreen::ConnectionList => {
-            "n: New | e: Edit | i: Import | Delete/Backspace: Delete | j/k: Nav | Enter: Connect | Ctrl+q: Quit"
+            "n: New | e: Edit | i: Import | Delete/Backspace: Delete | ↑↓: Nav | Enter: Connect | Ctrl+q: Quit"
         }
         CurrentScreen::Dashboard => {
             if app.is_delete_confirmation_open {
                 "Y: Confirm Delete | N/Esc: Cancel"
-            } else if app.is_db_selector_open {
-                "Esc: Close | j/k: Nav | Enter: Select Database"
-            } else if app.is_searching_keys {
-                "Esc: Exit Search | Enter: Select | Arrow: Navigate"
-            } else if !app.selected_keys.is_empty() {
-                "Space: Toggle | a: Select All | Ctrl+a: Clear | x: Delete | Enter: View | /: Search"
             } else {
-                "Space: Select | a: Select All | Enter: View | /: Search | d: DB | Ctrl+r: Refresh | b: Back"
+                match (
+                    app.is_db_selector_open,
+                    app.is_searching_keys,
+                ) {
+                    (true, _) => "Esc: Close | ↑↓: Nav | Enter: Select Database",
+                    (_, true) => "Esc: Exit Search | Space: Toggle | Ctrl+a: Select/Clear All | Enter: Select | Arrow: Navigate",
+                    _ if !app.current_value.is_empty() && app.is_json_content => {
+                        "e: Edit JSON | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | b: Back"
+                    }
+                    _ if !app.selected_keys.is_empty() => {
+                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command"
+                    }
+                    _ => {
+                        "Space: Select | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: DB | Ctrl+r: Refresh | b: Back"
+                    }
+                }
             }
         }
-        CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | j/k: Scroll | Ctrl+q: Quit",
+        CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+q: Quit",
         CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
+        CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",
     };
 
-    let status = format!("Mode: {:?} | {}", app.current_screen, status_text);
+    let status = format!(" {}", status_text);
     let paragraph = Paragraph::new(status)
         .style(Style::default().fg(Color::Gray))
         .block(
@@ -884,7 +1093,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -892,7 +1101,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 chunks[chunk_idx].y + 1,
             ));
         }
-        
+
         chunk_idx += 1;
     }
 
@@ -942,7 +1151,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, host_port_chunks[0]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -990,7 +1199,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, host_port_chunks[1]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -998,7 +1207,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 host_port_chunks[1].y + 1,
             ));
         }
-        
+
         chunk_idx += 2; // Skip spacer
     }
 
@@ -1050,7 +1259,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, user_pass_chunks[0]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -1100,7 +1309,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, user_pass_chunks[1]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -1108,7 +1317,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 user_pass_chunks[1].y + 1,
             ));
         }
-        
+
         chunk_idx += 2; // Skip spacer
     }
 
@@ -1253,7 +1462,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -1261,7 +1470,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 chunks[chunk_idx].y + 1,
             ));
         }
-        
+
         chunk_idx += 1;
     }
 
@@ -1307,7 +1516,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                     .title(title_span),
             );
         frame.render_widget(widget, chunks[chunk_idx]);
-        
+
         // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
@@ -1315,7 +1524,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 chunks[chunk_idx].y + 1,
             ));
         }
-        
+
         chunk_idx += 2; // Skip spacer
     }
 
@@ -1362,10 +1571,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let is_submit_focused = app.connection_form.editing_field == FormField::Submit;
     let (submit_fg, submit_border) = if is_submit_focused {
-        (
-            Color::Rgb(147, 112, 219),
-            Color::Rgb(147, 112, 219),
-        )
+        (Color::Rgb(147, 112, 219), Color::Rgb(147, 112, 219))
     } else {
         (Color::DarkGray, Color::Rgb(80, 90, 110))
     };

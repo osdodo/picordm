@@ -93,32 +93,48 @@ impl RedisService {
         }
     }
 
-    pub async fn get_keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub async fn get_keys(&self, pattern: &str, db_index: u32) -> Result<Vec<String>> {
         let pattern = pattern.to_string();
         self.execute_retry(move |mut conn| {
             let pattern = pattern.clone();
-            async move { Ok(conn.keys(pattern).await?) }
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(conn.keys(pattern).await?)
+            }
         })
         .await
     }
 
-    pub async fn get_type(&self, key: &str) -> Result<String> {
+    pub async fn get_type(&self, key: &str, db_index: u32) -> Result<String> {
         let key = key.to_string();
         self.execute_retry(move |mut conn| {
             let key = key.clone();
-            async move { Ok(redis::cmd("TYPE").arg(key).query_async(&mut conn).await?) }
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(redis::cmd("TYPE").arg(key).query_async(&mut conn).await?)
+            }
         })
         .await
     }
 
-    pub async fn get_value(&self, key: &str) -> Result<String> {
-        let key_type = self.get_type(key).await?;
+    pub async fn get_value(&self, key: &str, db_index: u32) -> Result<String> {
+        let key_type = self.get_type(key, db_index).await?;
         let key_owned = key.to_string();
 
         self.execute_retry(move |mut conn| {
             let key = key_owned.clone();
             let key_type = key_type.clone();
             async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
                 match key_type.as_str() {
                     "string" => {
                         let bytes: Vec<u8> = conn.get(&key).await?;
@@ -254,15 +270,125 @@ impl RedisService {
         .await
     }
 
-    pub async fn delete_key(&self, key: &str) -> Result<()> {
+    pub async fn set_value(&self, key: &str, value: &str, db_index: u32) -> Result<()> {
+        let key = key.to_string();
+        let value = value.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            let value = value.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                let _: () = conn.set(&key, &value).await?;
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    pub async fn delete_key(&self, key: &str, db_index: u32) -> Result<()> {
         let key = key.to_string();
         self.execute_retry(move |mut conn| {
             let key = key.clone();
             async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
                 let _: u32 = conn.del(&key).await?;
                 Ok(())
             }
         })
         .await
+    }
+
+    pub async fn execute_command(&self, args: &[&str], db_index: u32) -> Result<String> {
+        if args.is_empty() {
+            return Ok(String::new());
+        }
+
+        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        
+        self.execute_retry(move |mut conn| {
+            let args = args_owned.clone();
+            async move {
+                // Select the correct database first
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+
+                let mut cmd = redis::cmd(&args[0]);
+                for arg in &args[1..] {
+                    cmd.arg(arg);
+                }
+
+                let result: redis::RedisResult<redis::Value> = cmd.query_async(&mut conn).await;
+                
+                match result {
+                    Ok(value) => Ok(format_redis_value(&value)),
+                    Err(e) => Err(anyhow::anyhow!("{}", e)),
+                }
+            }
+        })
+        .await
+    }
+}
+
+fn format_redis_value(value: &redis::Value) -> String {
+    match value {
+        redis::Value::Nil => "(nil)".to_string(),
+        redis::Value::Int(i) => format!("(integer) {}", i),
+        redis::Value::BulkString(bytes) => {
+            String::from_utf8(bytes.clone()).unwrap_or_else(|_| format!("{:?}", bytes))
+        }
+        redis::Value::Array(arr) => {
+            if arr.is_empty() {
+                "(empty array)".to_string()
+            } else {
+                let mut result = String::new();
+                for (idx, item) in arr.iter().enumerate() {
+                    result.push_str(&format!("{}. {}\n", idx + 1, format_redis_value(item)));
+                }
+                result
+            }
+        }
+        redis::Value::SimpleString(s) => s.clone(),
+        redis::Value::Okay => "OK".to_string(),
+        redis::Value::Map(map) => {
+            let mut result = String::new();
+            for (key, val) in map {
+                result.push_str(&format!("{}: {}\n", format_redis_value(key), format_redis_value(val)));
+            }
+            result
+        }
+        redis::Value::Attribute { data, attributes } => {
+            format!("Data: {}\nAttributes: {}", 
+                format_redis_value(data), 
+                format_redis_value(&redis::Value::Map(attributes.clone())))
+        }
+        redis::Value::Set(set) => {
+            let mut result = String::new();
+            for (idx, item) in set.iter().enumerate() {
+                result.push_str(&format!("{}. {}\n", idx + 1, format_redis_value(item)));
+            }
+            result
+        }
+        redis::Value::Double(d) => format!("(double) {}", d),
+        redis::Value::Boolean(b) => format!("(boolean) {}", b),
+        redis::Value::VerbatimString { format, text } => {
+            format!("[{:?}] {}", format, text)
+        }
+        redis::Value::BigNumber(bn) => format!("(big number) {:?}", bn),
+        redis::Value::Push { kind, data } => {
+            let mut result = format!("Push [{:?}]:\n", kind);
+            for item in data {
+                result.push_str(&format!("{}\n", format_redis_value(item)));
+            }
+            result
+        }
+        redis::Value::ServerError(e) => format!("Server Error: {:?}", e),
     }
 }

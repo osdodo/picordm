@@ -13,6 +13,7 @@ pub enum CurrentScreen {
     KeyContent,
     NewConnectionForm,
     JsonEditor,
+    CommandMode,
 }
 
 pub struct App<'a> {
@@ -47,6 +48,11 @@ pub struct App<'a> {
     pub is_json_content: bool,
     pub scroll_offset: u16,
     pub json_editor: TextArea<'a>,
+    pub cached_highlighted_json: Option<Vec<ratatui::text::Line<'static>>>,
+
+    // Command input
+    pub command_input: String,
+    pub command_output: String, // Current command output
 
     // pending execution
     pub pending_connection: bool,
@@ -61,6 +67,9 @@ pub struct App<'a> {
     // Loading animation
     pub loading_frame: usize,
     pub connection_delay_frames: usize,
+
+    // Scroll throttling
+    pub last_scroll_time: std::time::Instant,
 
     // Error handling
     pub error_message: Option<String>,
@@ -97,6 +106,7 @@ impl<'a> App<'a> {
             is_json_content: false,
             scroll_offset: 0,
             json_editor: TextArea::default(),
+            cached_highlighted_json: None,
             pending_connection: false,
             pending_dashboard_data: false,
             is_connecting: false,
@@ -105,7 +115,10 @@ impl<'a> App<'a> {
             is_loading_value: false,
             loading_frame: 0,
             connection_delay_frames: 0,
+            last_scroll_time: std::time::Instant::now(),
             error_message: None,
+            command_input: String::new(),
+            command_output: String::new(),
         }
     }
 
@@ -148,59 +161,59 @@ impl<'a> App<'a> {
         self.pending_connection = false;
 
         if let Some(conn) = self.connection_list.selected_connection() {
-                let mut url_str = if conn.use_tls {
-                    "rediss://".to_string()
-                } else {
-                    "redis://".to_string()
-                };
+            let mut url_str = if conn.use_tls {
+                "rediss://".to_string()
+            } else {
+                "redis://".to_string()
+            };
 
-                if let Some(pass) = &conn.password {
-                    if !pass.is_empty() {
-                        if let Some(user) = &conn.username {
-                            if !user.is_empty() {
-                                url_str.push_str(user);
-                            }
+            if let Some(pass) = &conn.password {
+                if !pass.is_empty() {
+                    if let Some(user) = &conn.username {
+                        if !user.is_empty() {
+                            url_str.push_str(user);
                         }
-                        url_str.push(':');
-                        url_str.push_str(pass);
-                        url_str.push('@');
                     }
+                    url_str.push(':');
+                    url_str.push_str(pass);
+                    url_str.push('@');
                 }
+            }
 
-                url_str.push_str(&conn.host);
-                url_str.push(':');
-                url_str.push_str(&conn.port.to_string());
+            url_str.push_str(&conn.host);
+            url_str.push(':');
+            url_str.push_str(&conn.port.to_string());
 
-                match self.redis.connect(&url_str).await {
-                    Ok(_) => {
-                        self.is_connecting = false;
-                        self.loading_frame = 0;
-                        self.current_db_index = 0; // Reset to db0 on new connection
+            match self.redis.connect(&url_str).await {
+                Ok(_) => {
+                    self.is_connecting = false;
+                    self.loading_frame = 0;
+                    self.current_db_index = 0; // Reset to db0 on new connection
 
-                        // Switch to Dashboard after successful connection
-                        self.current_screen = CurrentScreen::Dashboard;
-                        self.current_connection_name = Some(conn.name.clone());
+                    // Switch to Dashboard after successful connection
+                    self.current_screen = CurrentScreen::Dashboard;
+                    self.current_connection_name = Some(conn.name.clone());
 
-                        // Need to load dashboard data - set loading indicators
-                        self.pending_dashboard_data = true;
-                        self.is_loading_keys = true;
-                        self.is_loading_server_info = true;
-                    }
-                    Err(e) => {
-                        self.is_connecting = false;
-                        self.loading_frame = 0;
-                        self.error_message = Some(format!("Connection failed: {}", e));
-                        // Go back to connection list on error
-                        self.current_screen = CurrentScreen::ConnectionList;
-                        self.current_connection_name = None;
-                    }
+                    // Need to load dashboard data - set loading indicators
+                    self.pending_dashboard_data = true;
+                    self.is_loading_keys = true;
+                    self.is_loading_server_info = true;
                 }
+                Err(e) => {
+                    self.is_connecting = false;
+                    self.loading_frame = 0;
+                    self.error_message = Some(format!("Connection failed: {}", e));
+                    // Go back to connection list on error
+                    self.current_screen = CurrentScreen::ConnectionList;
+                    self.current_connection_name = None;
+                }
+            }
         }
         Ok(())
     }
 
     pub async fn fetch_keys(&mut self, pattern: &str) -> Result<()> {
-        match self.redis.get_keys(pattern).await {
+        match self.redis.get_keys(pattern, self.current_db_index).await {
             Ok(keys) => {
                 self.keys = keys;
                 if !self.keys.is_empty() {
@@ -219,49 +232,94 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    pub async fn fetch_value(&mut self) -> Result<()> {
-        if let Some(selected) = self.key_list_state.selected() {
-            if let Some(key) = self.keys.get(selected) {
-                match self.redis.get_value(key).await {
-                    Ok(val) => {
-                        // Try formatting JSON
-                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&val) {
-                            if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
-                                self.current_value = pretty.clone();
-                                self.json_editor = TextArea::from(pretty.lines());
-                                self.is_json_content = true;
-                            } else {
-                                self.current_value = val.clone();
-                                self.json_editor = TextArea::from(val.lines());
-                                self.is_json_content = false;
-                            }
-                        } else {
-                            self.current_value = val.clone();
-                            self.json_editor = TextArea::from(val.lines());
-                            self.is_json_content = false;
-                        }
+    pub async fn fetch_value(&mut self, switch_screen: bool) -> Result<()> {
+        let Some(selected) = self.key_list_state.selected() else {
+            return Ok(());
+        };
+        let Some(key) = self.keys.get(selected) else {
+            return Ok(());
+        };
 
-                        self.error_message = None;
-                        self.current_screen = CurrentScreen::KeyContent; // Switch focus to content
-                        self.scroll_offset = 0; // Reset scroll when viewing new content
-                    }
-                    Err(e) => {
-                        self.error_message = Some(e.to_string());
-                    }
+        match self.redis.get_value(key, self.current_db_index).await {
+            Ok(val) => {
+                // Quick check: JSON must start with {, [, or " and be non-empty
+                let looks_like_json = val
+                    .trim_start()
+                    .starts_with(|c| c == '{' || c == '[' || c == '"');
+
+                // Try formatting JSON only if it looks like JSON
+                let (content, is_json) = if looks_like_json {
+                    serde_json::from_str::<serde_json::Value>(&val)
+                        .ok()
+                        .and_then(|json| serde_json::to_string_pretty(&json).ok())
+                        .map(|pretty| (pretty, true))
+                        .unwrap_or_else(|| (val, false))
+                } else {
+                    (val, false)
+                };
+
+                self.current_value = content.clone();
+                self.json_editor = TextArea::from(content.lines());
+                self.is_json_content = is_json;
+                self.cached_highlighted_json = None; // Clear cache when loading new value
+                self.command_output.clear();
+                self.error_message = None;
+                self.scroll_offset = 0;
+
+                if switch_screen {
+                    self.current_screen = CurrentScreen::KeyContent;
                 }
-                self.is_loading_value = false;
+            }
+            Err(e) => {
+                self.error_message = Some(e.to_string());
+            }
+        }
+        self.is_loading_value = false;
+        Ok(())
+    }
+
+    pub async fn save_current_value(&mut self) -> Result<()> {
+        let Some(selected) = self.key_list_state.selected() else {
+            return Ok(());
+        };
+        let Some(key) = self.keys.get(selected) else {
+            return Ok(());
+        };
+
+        match self.redis.set_value(key, &self.current_value, self.current_db_index).await {
+            Ok(_) => {
+                self.error_message = None;
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Failed to save: {}", e));
             }
         }
         Ok(())
     }
 
+
+
     pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+        // Throttle: only allow scroll every 100ms to handle trackpad inertia
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+            return;
+        }
+        self.last_scroll_time = now;
+        self.scroll_offset = self.scroll_offset.saturating_sub(2);
     }
 
     pub fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(1);
+        // Throttle: only allow scroll every 100ms to handle trackpad inertia
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+            return;
+        }
+        self.last_scroll_time = now;
+        self.scroll_offset = self.scroll_offset.saturating_add(2);
     }
+
+
 
     pub fn tick_loading(&mut self) {
         // Use a large cycle to support different spinner lengths
@@ -294,6 +352,12 @@ impl<'a> App<'a> {
     }
 
     pub fn next_key(&mut self) {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+            return;
+        }
+        self.last_scroll_time = now;
+
         if self.keys.is_empty() {
             return;
         }
@@ -311,6 +375,12 @@ impl<'a> App<'a> {
     }
 
     pub fn previous_key(&mut self) {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+            return;
+        }
+        self.last_scroll_time = now;
+
         if self.keys.is_empty() {
             return;
         }
@@ -618,7 +688,7 @@ impl<'a> App<'a> {
         let mut errors = Vec::new();
 
         for key in &keys_to_delete {
-            match self.redis.delete_key(key).await {
+            match self.redis.delete_key(key, self.current_db_index).await {
                 Ok(_) => {
                     deleted_count += 1;
                 }
@@ -664,4 +734,106 @@ impl<'a> App<'a> {
         self.is_delete_confirmation_open = false;
         Ok(())
     }
+
+    pub async fn execute_command(&mut self) -> Result<()> {
+        if self.command_input.trim().is_empty() {
+            return Ok(());
+        }
+
+        let command = self.command_input.trim().to_string();
+        let parts: Vec<&str> = command.split_whitespace().collect();
+
+        if parts.is_empty() {
+            self.command_input.clear();
+            return Ok(());
+        }
+
+        let mut output = match self.redis.execute_command(&parts, self.current_db_index).await {
+            Ok(output) => {
+                self.error_message = None;
+                output
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                // Check for connection errors and auto-reconnect
+                if error_str.contains("broken pipe")
+                    || error_str.contains("Connection refused")
+                    || error_str.contains("Connection reset")
+                {
+                    self.error_message = Some("Connection lost, reconnecting...".to_string());
+                    self.start_connection();
+                    return Ok(());
+                }
+                format!("(error) {}", error_str)
+            }
+        };
+
+        // Store output for display (with size limit)
+        const MAX_OUTPUT_SIZE: usize = 500 * 1024; // 500KB
+        if output.len() > MAX_OUTPUT_SIZE {
+            let original_len = output.len();
+            output.truncate(MAX_OUTPUT_SIZE);
+            output.push_str(&format!(
+                "\n\n[Output truncated - too large ({} bytes). Use smaller queries or pagination.]",
+                original_len
+            ));
+        }
+
+        self.command_output = output.clone();
+        
+        // Check if output is JSON and format it
+        let trimmed = output.trim();
+        if (trimmed.starts_with('{') && trimmed.ends_with('}')) || 
+           (trimmed.starts_with('[') && trimmed.ends_with(']')) {
+            // Try to parse and pretty-print JSON
+            match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(json_value) => {
+                    if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
+                        self.current_value = formatted;
+                        self.is_json_content = true;
+                    } else {
+                        self.current_value = output;
+                        self.is_json_content = false;
+                    }
+                }
+                Err(_) => {
+                    // Not valid JSON, treat as plain text
+                    self.current_value = output;
+                    self.is_json_content = false;
+                }
+            }
+        } else {
+            // Not JSON format
+            self.current_value = output;
+            self.is_json_content = false;
+        }
+        
+        self.cached_highlighted_json = None; // Clear cache for new content
+        
+        self.command_input.clear();
+
+        // Reset scroll to top for new output
+        self.scroll_offset = 0;
+
+        Ok(())
+    }
+
+    pub fn toggle_command_mode(&mut self) {
+        if self.current_screen == CurrentScreen::CommandMode {
+            // Exit command mode - return to Dashboard
+            self.current_screen = CurrentScreen::Dashboard;
+            // Clear all CLI state when exiting command mode
+            self.command_input.clear();
+            self.command_output.clear();
+            self.current_value.clear();
+            self.is_json_content = false;
+            self.scroll_offset = 0;
+            self.cached_highlighted_json = None;
+        } else {
+            // Enter command mode
+            self.current_screen = CurrentScreen::CommandMode;
+        }
+    }
+
+
 }
