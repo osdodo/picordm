@@ -1,11 +1,9 @@
-name: Build Release
+name: Build Release (Stable)
 
 on:
   push:
     tags:
       - 'v*'
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -19,17 +17,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 (use older Ubuntu for better compatibility)
+          # Linux x86_64 (using older Ubuntu for better GLIBC compatibility)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-20.04
             archive_name: linux-x86_64
           
-          # Linux ARM64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-20.04
-            archive_name: linux-aarch64
-          
-          # macOS x86_64
+          # macOS x86_64 (Intel Macs)
           - target: x86_64-apple-darwin
             os: macos-latest
             archive_name: macos-x86_64
@@ -43,11 +36,6 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive_name: windows-x86_64
-          
-          # Windows ARM64 (commented out due to cross-compilation complexity)
-          # - target: aarch64-pc-windows-msvc
-          #   os: windows-latest
-          #   archive_name: windows-aarch64
 
     steps:
     - name: Checkout code
@@ -58,15 +46,11 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
-    - name: Install cross (for cross-compilation)
-      if: matrix.os == 'ubuntu-20.04' && matrix.target != 'x86_64-unknown-linux-gnu'
-      run: cargo install cross --git https://github.com/cross-rs/cross
-
-    - name: Install system dependencies (Linux native)
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
+    - name: Install system dependencies (Linux)
+      if: matrix.os == 'ubuntu-20.04'
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libssl-dev
+        sudo apt-get install -y pkg-config libssl-dev musl-tools
 
     - name: Cache cargo registry
       uses: actions/cache@v4
@@ -80,18 +64,16 @@ jobs:
           ${{ runner.os }}-cargo-${{ matrix.target }}-
           ${{ runner.os }}-cargo-
 
-    - name: Build release (cross-compilation)
-      if: matrix.os == 'ubuntu-20.04' && matrix.target != 'x86_64-unknown-linux-gnu'
-      run: cross build --release --target ${{ matrix.target }}
-
-    - name: Build release (Linux native with static linking)
+    - name: Build release (Linux with static OpenSSL)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
       env:
-        RUSTFLAGS: '-C target-feature=+crt-static'
+        OPENSSL_STATIC: 1
+        OPENSSL_LIB_DIR: /usr/lib/x86_64-linux-gnu
+        OPENSSL_INCLUDE_DIR: /usr/include/openssl
       run: cargo build --release --target ${{ matrix.target }}
 
     - name: Build release (other platforms)
-      if: matrix.os != 'ubuntu-20.04'
+      if: matrix.target != 'x86_64-unknown-linux-gnu'
       run: cargo build --release --target ${{ matrix.target }}
 
     - name: Get version
@@ -118,6 +100,14 @@ jobs:
         mkdir -p "$RELEASE_DIR"
         cp "$BINARY_NAME" "$RELEASE_DIR/"
         
+        # Add README and LICENSE if they exist
+        if [ -f "../../../README.md" ]; then
+          cp "../../../README.md" "$RELEASE_DIR/"
+        fi
+        if [ -f "../../../LICENSE" ]; then
+          cp "../../../LICENSE" "$RELEASE_DIR/"
+        fi
+        
         tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR"
         
         echo "ARCHIVE_FILE=${RELEASE_DIR}.tar.gz" >> $GITHUB_ENV
@@ -134,6 +124,14 @@ jobs:
         
         New-Item -ItemType Directory -Path $RELEASE_DIR -Force
         Copy-Item $BINARY_NAME -Destination "$RELEASE_DIR/"
+        
+        # Add README and LICENSE if they exist
+        if (Test-Path "../../../README.md") {
+          Copy-Item "../../../README.md" -Destination "$RELEASE_DIR/"
+        }
+        if (Test-Path "../../../LICENSE") {
+          Copy-Item "../../../LICENSE" -Destination "$RELEASE_DIR/"
+        }
         
         Compress-Archive -Path $RELEASE_DIR -DestinationPath "${RELEASE_DIR}.zip"
         
@@ -185,5 +183,21 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
+        body: |
+          ## Release Notes
+          
+          ### Supported Platforms
+          - **Linux x86_64**: Compatible with most Linux distributions (GLIBC 2.31+)
+          - **macOS x86_64**: Intel-based Macs (macOS 10.12+)
+          - **macOS ARM64**: Apple Silicon Macs (macOS 11.0+)
+          - **Windows x86_64**: Windows 10/11 (64-bit)
+          
+          ### Installation
+          1. Download the appropriate archive for your platform
+          2. Extract the archive
+          3. Run the `picordm` executable
+          
+          ### Verification
+          Each release includes SHA256 checksums for verification.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
