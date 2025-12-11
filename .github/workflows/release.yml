@@ -1,0 +1,176 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_name: linux-x86_64
+          
+          # Linux ARM64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_name: linux-aarch64
+          
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive_name: macos-x86_64
+          
+          # macOS ARM64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive_name: macos-aarch64
+          
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_name: windows-x86_64
+          
+          # Windows ARM64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            archive_name: windows-aarch64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install cross-compilation tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Configure cross-compilation (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
+        echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ matrix.target }}-
+          ${{ runner.os }}-cargo-
+
+    - name: Build release
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Get version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          VERSION="v${VERSION}-dev"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Create release package (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        BINARY_NAME="picordm"
+        RELEASE_DIR="picordm-${{ steps.version.outputs.version }}-${{ matrix.archive_name }}"
+        
+        mkdir -p "$RELEASE_DIR"
+        cp "$BINARY_NAME" "$RELEASE_DIR/"
+        
+        tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR"
+        
+        echo "ARCHIVE_FILE=${RELEASE_DIR}.tar.gz" >> $GITHUB_ENV
+        echo "ARCHIVE_PATH=target/${{ matrix.target }}/release/${RELEASE_DIR}.tar.gz" >> $GITHUB_ENV
+
+    - name: Create release package (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        $BINARY_NAME = "picordm.exe"
+        $RELEASE_DIR = "picordm-${{ steps.version.outputs.version }}-${{ matrix.archive_name }}"
+        
+        New-Item -ItemType Directory -Path $RELEASE_DIR -Force
+        Copy-Item $BINARY_NAME -Destination "$RELEASE_DIR/"
+        
+        Compress-Archive -Path $RELEASE_DIR -DestinationPath "${RELEASE_DIR}.zip"
+        
+        echo "ARCHIVE_FILE=${RELEASE_DIR}.zip" >> $env:GITHUB_ENV
+        echo "ARCHIVE_PATH=target/${{ matrix.target }}/release/${RELEASE_DIR}.zip" >> $env:GITHUB_ENV
+
+    - name: Generate SHA256 checksum (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        sha256sum "${{ env.ARCHIVE_FILE }}" > "${{ env.ARCHIVE_FILE }}.sha256"
+
+    - name: Generate SHA256 checksum (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd target/${{ matrix.target }}/release
+        Get-FileHash -Algorithm SHA256 "${{ env.ARCHIVE_FILE }}" | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } > "${{ env.ARCHIVE_FILE }}.sha256"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: picordm-${{ matrix.archive_name }}
+        path: |
+          ${{ env.ARCHIVE_PATH }}
+          ${{ env.ARCHIVE_PATH }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Display structure of downloaded files
+      run: ls -la artifacts/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/**/*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
