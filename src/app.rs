@@ -1,10 +1,15 @@
+use std::time::Duration;
+
 use anyhow::Result;
+use ratatui::crossterm::event::{self, Event};
 use ratatui::widgets::ListState;
 use tui_textarea::TextArea;
 
 use crate::connection::{ConnectionForm, ConnectionList};
+use crate::handler::{self, handle_key_event};
 use crate::service::{DbInfo, RedisService, ServerInfo};
 use crate::storage::{load_connections, save_connections};
+use crate::ui;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum CurrentScreen {
@@ -286,7 +291,11 @@ impl<'a> App<'a> {
             return Ok(());
         };
 
-        match self.redis.set_value(key, &self.current_value, self.current_db_index).await {
+        match self
+            .redis
+            .set_value(key, &self.current_value, self.current_db_index)
+            .await
+        {
             Ok(_) => {
                 self.error_message = None;
             }
@@ -297,12 +306,10 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-
-
     pub fn scroll_up(&mut self) {
         // Throttle: only allow scroll every 100ms to handle trackpad inertia
         let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
             return;
         }
         self.last_scroll_time = now;
@@ -312,14 +319,12 @@ impl<'a> App<'a> {
     pub fn scroll_down(&mut self) {
         // Throttle: only allow scroll every 100ms to handle trackpad inertia
         let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
             return;
         }
         self.last_scroll_time = now;
         self.scroll_offset = self.scroll_offset.saturating_add(2);
     }
-
-
 
     pub fn tick_loading(&mut self) {
         // Use a large cycle to support different spinner lengths
@@ -353,7 +358,7 @@ impl<'a> App<'a> {
 
     pub fn next_key(&mut self) {
         let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
             return;
         }
         self.last_scroll_time = now;
@@ -376,7 +381,7 @@ impl<'a> App<'a> {
 
     pub fn previous_key(&mut self) {
         let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16  {
+        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
             return;
         }
         self.last_scroll_time = now;
@@ -748,7 +753,11 @@ impl<'a> App<'a> {
             return Ok(());
         }
 
-        let mut output = match self.redis.execute_command(&parts, self.current_db_index).await {
+        let mut output = match self
+            .redis
+            .execute_command(&parts, self.current_db_index)
+            .await
+        {
             Ok(output) => {
                 self.error_message = None;
                 output
@@ -780,11 +789,12 @@ impl<'a> App<'a> {
         }
 
         self.command_output = output.clone();
-        
+
         // Check if output is JSON and format it
         let trimmed = output.trim();
-        if (trimmed.starts_with('{') && trimmed.ends_with('}')) || 
-           (trimmed.starts_with('[') && trimmed.ends_with(']')) {
+        if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+            || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        {
             // Try to parse and pretty-print JSON
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(json_value) => {
@@ -807,9 +817,9 @@ impl<'a> App<'a> {
             self.current_value = output;
             self.is_json_content = false;
         }
-        
+
         self.cached_highlighted_json = None; // Clear cache for new content
-        
+
         self.command_input.clear();
 
         // Reset scroll to top for new output
@@ -835,5 +845,39 @@ impl<'a> App<'a> {
         }
     }
 
+    pub async fn run(mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
+        loop {
+            if self.should_execute_connection() {
+                self.connect_to_selected().await?;
+            }
 
+            if self.should_execute_dashboard_data() {
+                self.load_dashboard_data().await?;
+            }
+
+            terminal.draw(|f| ui::draw(f, &mut self))?;
+
+            if event::poll(Duration::from_millis(100))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if handle_key_event(terminal, &mut self, key).await? {
+                            return Ok(());
+                        }
+                    }
+                    Event::Mouse(mouse) => {
+                        handler::handle_mouse_event(terminal, &mut self, mouse).await?;
+                    }
+                    _ => {}
+                }
+            } else {
+                if self.is_connecting
+                    || self.is_loading_server_info
+                    || self.is_loading_value
+                    || self.is_loading_keys
+                {
+                    self.tick_loading();
+                }
+            }
+        }
+    }
 }
