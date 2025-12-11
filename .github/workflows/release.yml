@@ -132,10 +132,18 @@ jobs:
         $VERSION = "${{ steps.version.outputs.version }}"
         $RELEASE_DIR = "picordm-$VERSION-${{ matrix.archive_name }}"
         
+        # Clean up any existing files
+        if (Test-Path $RELEASE_DIR) {
+          Remove-Item -Path $RELEASE_DIR -Recurse -Force
+        }
+        if (Test-Path "${RELEASE_DIR}.zip") {
+          Remove-Item -Path "${RELEASE_DIR}.zip" -Force
+        }
+        
         New-Item -ItemType Directory -Path $RELEASE_DIR -Force
         Copy-Item $BINARY_NAME -Destination "$RELEASE_DIR/"
         
-        Compress-Archive -Path $RELEASE_DIR -DestinationPath "${RELEASE_DIR}.zip"
+        Compress-Archive -Path $RELEASE_DIR -DestinationPath "${RELEASE_DIR}.zip" -Force
         
         echo "ARCHIVE_FILE=${RELEASE_DIR}.zip" >> $env:GITHUB_ENV
         echo "ARCHIVE_PATH=target/${{ matrix.target }}/release/${RELEASE_DIR}.zip" >> $env:GITHUB_ENV
