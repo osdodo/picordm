@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,14 +16,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 (use older Ubuntu for better compatibility)
+          # Linux x86_64
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-20.04
+            os: ubuntu-latest
             archive_name: linux-x86_64
           
           # Linux ARM64
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-20.04
+            os: ubuntu-latest
             archive_name: linux-aarch64
           
           # macOS x86_64
@@ -43,11 +40,6 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive_name: windows-x86_64
-          
-          # Windows ARM64 (commented out due to cross-compilation complexity)
-          # - target: aarch64-pc-windows-msvc
-          #   os: windows-latest
-          #   archive_name: windows-aarch64
 
     steps:
     - name: Checkout code
@@ -59,7 +51,7 @@ jobs:
         targets: ${{ matrix.target }}
 
     - name: Install cross (for cross-compilation)
-      if: matrix.os == 'ubuntu-20.04' && matrix.target != 'x86_64-unknown-linux-gnu'
+      if: matrix.os == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu'
       run: cargo install cross --git https://github.com/cross-rs/cross
 
     - name: Install system dependencies (Linux native)
@@ -81,17 +73,17 @@ jobs:
           ${{ runner.os }}-cargo-
 
     - name: Build release (cross-compilation)
-      if: matrix.os == 'ubuntu-20.04' && matrix.target != 'x86_64-unknown-linux-gnu'
+      if: matrix.os == 'ubuntu-latest' && matrix.target != 'x86_64-unknown-linux-gnu'
       run: cross build --release --target ${{ matrix.target }}
 
-    - name: Build release (Linux native with static linking)
+    - name: Build release (Linux native with static OpenSSL)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
       env:
-        RUSTFLAGS: '-C target-feature=+crt-static'
+        OPENSSL_STATIC: 1
       run: cargo build --release --target ${{ matrix.target }}
 
     - name: Build release (other platforms)
-      if: matrix.os != 'ubuntu-20.04'
+      if: matrix.os != 'ubuntu-latest'
       run: cargo build --release --target ${{ matrix.target }}
 
     - name: Get version
