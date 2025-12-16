@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, CurrentScreen};
 use crate::connection::FormField;
+use crate::file_selector::DirEntry;
 
 // Cache syntect resources for better performance
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -70,9 +71,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Delete confirmation dialog
     if app.is_delete_confirmation_open {
-        let popup_area = centered_rect_fixed_height(50, 10, size);
+        let popup_area = centered_rect_fixed_height(60, 8, size);
         frame.render_widget(Clear, popup_area);
         render_delete_confirmation(frame, app, popup_area);
+    }
+
+    // Progress dialog
+    if app.progress_dialog.is_some() {
+        let popup_area = centered_rect_fixed_height(60, 8, size);
+        frame.render_widget(Clear, popup_area);
+        render_progress_dialog(frame, app, popup_area);
     }
 }
 
@@ -186,20 +194,40 @@ fn format_uptime(seconds: u64) -> String {
     }
 }
 
-fn format_memory(bytes: u64) -> String {
+fn format_bytes(bytes: u64, precision: usize, include_gb: bool) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
 
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
+    if include_gb && bytes >= GB {
+        format!(
+            "{:.precision$} GB",
+            bytes as f64 / GB as f64,
+            precision = precision
+        )
     } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
+        format!(
+            "{:.precision$} MB",
+            bytes as f64 / MB as f64,
+            precision = precision
+        )
     } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
+        format!(
+            "{:.precision$} KB",
+            bytes as f64 / KB as f64,
+            precision = precision
+        )
     } else {
         format!("{} B", bytes)
     }
+}
+
+fn format_memory(bytes: u64) -> String {
+    format_bytes(bytes, 2, true)
+}
+
+fn format_file_size(bytes: u64) -> String {
+    format_bytes(bytes, 1, false)
 }
 
 fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -215,6 +243,8 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.current_screen == CurrentScreen::ConnectionList {
         render_connection_list(frame, app, chunks[0]);
         render_connection_content(frame, app, chunks[1]);
+    } else if app.current_screen == CurrentScreen::FileSelector {
+        render_file_selector(frame, app, area);
     } else {
         render_key_sidebar(frame, app, chunks[0]);
         render_content_with_command(frame, app, chunks[1]);
@@ -246,7 +276,8 @@ fn render_content_with_command(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
     // If there's command output or in command mode, show CLI interface
-    let show_cli_interface = !app.command_output.is_empty() || app.current_screen == CurrentScreen::CommandMode;
+    let show_cli_interface =
+        !app.command_output.is_empty() || app.current_screen == CurrentScreen::CommandMode;
 
     if show_cli_interface {
         render_cli_ui(frame, app, area);
@@ -663,7 +694,7 @@ fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
     if app.current_screen == CurrentScreen::CommandMode {
         let cursor_x = area.x + 3 + app.command_input.width() as u16; // "> " + input
         let cursor_y = area.y + 1;
-        
+
         if cursor_x < area.right() && cursor_y < area.bottom() {
             frame.set_cursor_position(ratatui::layout::Position {
                 x: cursor_x,
@@ -702,7 +733,7 @@ fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
         // Reuse the exact same logic as render_content_area for value display
         let inner_height = area.height.saturating_sub(2); // Account for borders
         let content_lines = app.current_value.lines().count() as u16;
-        
+
         if content_lines > inner_height {
             let max_scroll = content_lines.saturating_sub(inner_height);
             if app.scroll_offset > max_scroll {
@@ -933,33 +964,35 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let status_text = match app.current_screen {
         CurrentScreen::NewConnectionForm => "Esc: Cancel | Tab: Next | Enter: Toggle/Save",
         CurrentScreen::ConnectionList => {
-            "n: New | e: Edit | i: Import | Delete/Backspace: Delete | ↑↓: Nav | Enter: Connect | Ctrl+q: Quit"
+            "n: New connection | e: Edit connection | i: Import connection | Delete/Backspace: Delete connection | ↑↓: Nav | Enter: Connect | Ctrl+q: Quit"
         }
         CurrentScreen::Dashboard => {
             if app.is_delete_confirmation_open {
                 "Y: Confirm Delete | N/Esc: Cancel"
             } else {
-                match (
-                    app.is_db_selector_open,
-                    app.is_searching_keys,
-                ) {
+                match (app.is_db_selector_open, app.is_searching_keys) {
                     (true, _) => "Esc: Close | ↑↓: Nav | Enter: Select Database",
-                    (_, true) => "Esc: Exit Search | Space: Toggle | Ctrl+a: Select/Clear All | Enter: Select | Arrow: Navigate",
+                    (_, true) => {
+                        "Esc: Exit Search | Space: Toggle | Ctrl+a: Select/Clear All | Enter: Select | Arrow: Navigate"
+                    }
                     _ if !app.current_value.is_empty() && app.is_json_content => {
-                        "e: Edit JSON | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | b: Back"
+                        "e: Edit JSON | b: Back | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ if !app.selected_keys.is_empty() => {
-                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command"
+                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ => {
-                        "Space: Select | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: DB | Ctrl+r: Refresh | b: Back"
+                        "Space: Select | b: Back | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: DB | Ctrl+r: Refresh | Ctrl+e: Export | Ctrl+l: Import"
                     }
                 }
             }
         }
-        CurrentScreen::KeyContent => "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+q: Quit",
+        CurrentScreen::KeyContent => {
+            "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
+        }
         CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
         CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",
+        CurrentScreen::FileSelector => "↑↓: Navigate | Enter: Import | Esc: Cancel",
     };
 
     let status = format!(" {}", status_text);
@@ -1663,8 +1696,7 @@ fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .margin(2)
         .constraints([
-            Constraint::Length(3), // Message
-            Constraint::Length(1), // Spacer
+            Constraint::Length(2), // Message
             Constraint::Length(1), // Buttons hint
         ])
         .split(area);
@@ -1683,7 +1715,6 @@ fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(""),
         Line::from(Span::styled(
             "This action cannot be undone.",
             Style::default().fg(Color::Yellow),
@@ -1695,14 +1726,14 @@ fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
 
     let buttons_hint = Paragraph::new(Line::from(vec![
         Span::styled(
-            "[Y]",
+            "[y]",
             Style::default()
                 .fg(Color::LightRed)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" Yes, delete  ", Style::default().fg(Color::White)),
         Span::styled(
-            "[N/Esc]",
+            "[n/Esc]",
             Style::default()
                 .fg(Color::Rgb(147, 112, 219))
                 .add_modifier(Modifier::BOLD),
@@ -1711,5 +1742,224 @@ fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
     ]))
     .alignment(ratatui::layout::Alignment::Center);
 
-    frame.render_widget(buttons_hint, chunks[2]);
+    frame.render_widget(buttons_hint, chunks[1]);
+}
+
+fn render_progress_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    if let Some(ref dialog) = app.progress_dialog {
+        let title_color = if dialog.is_complete {
+            Color::Green
+        } else {
+            Color::Rgb(147, 112, 219)
+        };
+
+        let block = Block::default()
+            .title(Line::from(vec![Span::styled(
+                &dialog.title,
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD),
+            )]))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(title_color))
+            .style(Style::default().bg(Color::Rgb(25, 25, 35)));
+
+        frame.render_widget(block, area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints([
+                Constraint::Length(2), // Message with more space
+                Constraint::Length(1), // Progress indicator
+            ])
+            .split(area);
+
+        // Message with icon and better styling
+        let message_lines = if dialog.is_complete {
+            vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    &dialog.message,
+                    Style::default()
+                        .fg(
+                            if dialog.message.contains("Exported")
+                                || dialog.message.contains("Imported")
+                            {
+                                Color::Green
+                            } else {
+                                Color::Red
+                            },
+                        )
+                        .add_modifier(Modifier::BOLD),
+                )]),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        get_spinner_frame(app.loading_frame),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(&dialog.message, Style::default().fg(Color::White)),
+                ]),
+            ]
+        };
+
+        let message_widget =
+            Paragraph::new(message_lines).alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(message_widget, chunks[0]);
+
+        // Bottom hint - only show when complete
+        if dialog.is_complete {
+            let hint_widget = Paragraph::new(Line::from(vec![
+                Span::styled("Press ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "Esc",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" to close", Style::default().fg(Color::DarkGray)),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center);
+            frame.render_widget(hint_widget, chunks[1]);
+        }
+    }
+}
+
+fn render_file_selector(frame: &mut Frame, app: &App, area: Rect) {
+    let popup_area = centered_rect_fixed_height(70, 18, area);
+    frame.render_widget(Clear, popup_area);
+
+    // Show current directory in title
+    let current_dir_display = app
+        .file_selector
+        .current_dir
+        .to_string_lossy()
+        .chars()
+        .take(40)
+        .collect::<String>();
+    let title = format!("Browse Files - {}", current_dir_display);
+
+    let block = Block::default()
+        .title(Line::from(vec![Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(147, 112, 219))
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
+        .style(Style::default().bg(Color::Rgb(25, 25, 35)));
+
+    frame.render_widget(block, popup_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Min(1),    // File list
+            Constraint::Length(3), // Instructions
+        ])
+        .split(popup_area);
+
+    // Directory and file list
+    if app.file_selector.dir_entries.is_empty() {
+        let no_files_widget = Paragraph::new("Directory is empty or cannot be accessed")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(no_files_widget, chunks[0]);
+    } else {
+        let items: Vec<ListItem> = app
+            .file_selector
+            .dir_entries
+            .iter()
+            .map(|entry| match entry {
+                DirEntry::Parent => ListItem::new(Line::from(vec![
+                    Span::styled("[DIR] ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        "..",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])),
+                DirEntry::Directory(path) => {
+                    let dirname = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    ListItem::new(Line::from(vec![
+                        Span::styled("[DIR] ", Style::default().fg(Color::Cyan)),
+                        Span::styled(dirname, Style::default().fg(Color::Cyan)),
+                    ]))
+                }
+                DirEntry::JsonFile(path, size) => {
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let size_str = format_file_size(*size);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(filename, Style::default().fg(Color::White)),
+                        Span::styled(
+                            format!(" ({})", size_str),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]))
+                }
+            })
+            .collect();
+
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(50, 50, 70))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+
+        frame.render_stateful_widget(list, chunks[0], &mut app.file_selector.state.clone());
+    }
+
+    // Instructions
+    let instructions = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(
+                "↑↓",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Navigate  ", Style::default().fg(Color::White)),
+            Span::styled(
+                "Enter",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Open/Import  ", Style::default().fg(Color::White)),
+            Span::styled(
+                "Esc",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Cancel", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("[DIR] Directory  ", Style::default().fg(Color::Cyan)),
+            Span::styled("JSON File", Style::default().fg(Color::Green)),
+        ]),
+    ])
+    .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(instructions, chunks[1]);
 }

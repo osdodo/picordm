@@ -11,6 +11,18 @@ pub async fn handle_key_event(
     app: &mut App<'_>,
     key: KeyEvent,
 ) -> Result<bool> {
+    // Handle progress dialog first - block most input during operations
+    if let Some(ref dialog) = app.progress_dialog {
+        if dialog.is_complete {
+            // Allow Esc to close completed dialog
+            if key.code == KeyCode::Esc {
+                app.hide_progress_dialog();
+            }
+        }
+        // Block all other input during progress operations
+        return Ok(false);
+    }
+
     if app.current_screen == CurrentScreen::JsonEditor {
         handle_json_editor(terminal, app, key).await?;
         return Ok(false);
@@ -32,6 +44,9 @@ pub async fn handle_key_event(
         }
         CurrentScreen::CommandMode => {
             handle_command_mode(terminal, app, key).await?;
+        }
+        CurrentScreen::FileSelector => {
+            handle_file_selector(terminal, app, key).await?;
         }
         CurrentScreen::JsonEditor => {
             // Already handled above
@@ -320,7 +335,6 @@ async fn handle_command_mode(
         }
         KeyCode::Backspace => {
             app.command_input.pop();
-
         }
         KeyCode::Enter => {
             terminal.draw(|f| ui::draw(f, app))?;
@@ -344,9 +358,9 @@ async fn handle_key_search(
         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Support Ctrl+a (select all) in search mode
             let filtered_keys = app.get_filtered_keys();
-            let all_selected = !filtered_keys.is_empty() 
+            let all_selected = !filtered_keys.is_empty()
                 && filtered_keys.iter().all(|k| app.selected_keys.contains(k));
-            
+
             if all_selected {
                 app.clear_key_selection();
             } else {
@@ -436,6 +450,8 @@ async fn handle_dashboard_normal(
 
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
+                // Show progress dialog immediately and redraw to prevent duplicate operations
+                app.show_progress_dialog("Deleting Keys".to_string(), "Preparing...".to_string());
                 terminal.draw(|f| ui::draw(f, app))?;
                 app.delete_selected_keys().await?;
             }
@@ -453,9 +469,9 @@ async fn handle_dashboard_normal(
             if app.current_screen == CurrentScreen::Dashboard {
                 // Toggle: if all keys are selected, clear selection; otherwise select all
                 let filtered_keys = app.get_filtered_keys();
-                let all_selected = !filtered_keys.is_empty() 
+                let all_selected = !filtered_keys.is_empty()
                     && filtered_keys.iter().all(|k| app.selected_keys.contains(k));
-                
+
                 if all_selected {
                     app.clear_key_selection();
                 } else {
@@ -473,18 +489,33 @@ async fn handle_dashboard_normal(
             terminal.draw(|f| ui::draw(f, app))?;
             let _ = app.load_server_info().await;
         }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+                // Show progress dialog and start export
+                app.show_progress_dialog("Export Data".to_string(), "Preparing...".to_string());
+                terminal.draw(|f| ui::draw(f, app))?;
+                if let Err(e) = app.export_redis_data().await {
+                    app.error_message = Some(format!("Export failed: {}", e));
+                }
+            }
+        }
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+                app.show_file_selector();
+            }
+        }
         // Ignore other inputs with modifier keys
         KeyCode::Char(_)
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                || key.modifiers.contains(KeyModifiers::ALT)
-                || key.modifiers.contains(KeyModifiers::SUPER) => {}
-        // Handling regular buttons
+            if key.modifiers.contains(KeyModifiers::ALT)
+                || key.modifiers.contains(KeyModifiers::SUPER) =>
+        {
+            // Ignore Alt and Super modifier keys
+        }
         KeyCode::Char(' ') => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_key_selection();
             }
         }
-
         KeyCode::Delete | KeyCode::Backspace => {
             if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
                 app.open_delete_confirmation();
@@ -496,7 +527,9 @@ async fn handle_dashboard_normal(
             }
         }
         KeyCode::Char('>') => {
-            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+            if app.current_screen == CurrentScreen::Dashboard
+                || app.current_screen == CurrentScreen::KeyContent
+            {
                 app.toggle_command_mode();
             }
         }
@@ -688,7 +721,7 @@ async fn handle_keys_list_click(
         if list_row < filtered_keys.len() {
             // Get the selected key from filtered list
             let selected_key = &filtered_keys[list_row];
-            
+
             // Find the original index in the full keys list
             if let Some(original_idx) = app.keys.iter().position(|k| k == selected_key) {
                 // Update selection to original index
@@ -707,5 +740,42 @@ async fn handle_keys_list_click(
         }
     }
 
+    Ok(())
+}
+
+async fn handle_file_selector(
+    terminal: &mut DefaultTerminal,
+    app: &mut App<'_>,
+    key: KeyEvent,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            app.current_screen = CurrentScreen::Dashboard;
+        }
+        KeyCode::Down => {
+            app.next_dir_entry();
+        }
+        KeyCode::Up => {
+            app.previous_dir_entry();
+        }
+        KeyCode::Enter => {
+            if let Some(_file_path) = app.enter_selected_entry() {
+                // A file was selected, show progress dialog and start import
+                app.show_progress_dialog("Import Data".to_string(), "Preparing...".to_string());
+                let _ = terminal.draw(|f| ui::draw(f, app));
+
+                // Execute the import
+                if let Err(e) = app.import_redis_data().await {
+                    app.error_message = Some(format!("Import failed: {}", e));
+                }
+
+                // Return to dashboard
+                app.current_screen = CurrentScreen::Dashboard;
+            }
+            // If it was a directory, the method already handled navigation
+        }
+
+        _ => {}
+    }
     Ok(())
 }

@@ -8,16 +8,14 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 
 ## Features
 
-- 🪶 **Lightweight** - Minimal memory footprint and fast performance
-- 🔌 **Connection Management** - Save and manage multiple Redis connections with TLS/SSL support
-- 📋 **Quick Import** - One-click import from clipboard connection strings (shortcut `i`)
-- 🔍 **Key Browser** - Real-time search and filter Redis keys with batch selection and deletion
-- 📊 **Server Monitoring** - Display uptime, memory usage, connected clients, and key counts
-- 💾 **Database Switching** - Seamlessly switch between Redis databases
-- ⌨️ **Command Interface** - Execute Redis commands directly in the TUI with `>` shortcut
+- **Lightweight** - Fast performance with minimal memory usage
+- **Connection Management** - Multiple Redis connections with TLS/SSL support
+- **Key Browser** - Search, filter, and manage Redis keys
+- **Server Monitoring** - Real-time server stats (uptime, memory, clients, keys)
+- **Command Interface** - Execute Redis commands directly (`>` to enter CLI mode)
+- **Import/Export** - JSON data import/export with full Redis type support
 
-
-## Installation and Usage
+## Installation
 
 ```bash
 cargo build --release
@@ -26,34 +24,43 @@ cargo build --release
 
 ## Note
 
-### Quick Import Connection (Shortcut `i`)
+### Connection
 
-1. Copy a Redis connection string to your clipboard
-2. Press `i` key in the connection list interface
-3. Automatically parse and connect to the Redis server
-
-Supported connection string formats:
+- Press `i` to import connection from clipboard
+- Supports: `redis://user:pass@host:port` and `redis-cli` command formats
 
 ```
 rediss://admin:securepass@prod.redis.com:6380
-```
 
-```
 redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni admin:securepass@prod.redis.com
 ```
+
+### Key Operations
+
+- Browse and search keys in the sidebar
+- Press `Space` to select multiple keys
+- Press `Delete` to remove selected keys
+
+### Data Import/Export
+
+- `Ctrl+E` - Export data to JSON file
+- `Ctrl+L` - Import data from JSON file
+- See [IMPORT_DATA.md](docs/IMPORT_DATA.md) for format details
+
+### Commands
+
+- `>` - Enter command mode
+- `/` - Search keys
+- `Esc` - Exit current mode
 
 ### Copy Text
 
 To copy text from the interface, use your terminal's text selection feature:
+
 - **macOS (iTerm2/Terminal)**: Hold `Option/Alt` key and select text with mouse, then `Cmd+C` to copy
 - **Linux**: Hold `Shift` key and select text with mouse, then `Ctrl+Shift+C` to copy
 - **Windows**: Hold `Shift` key and select text with mouse, then right-click to copy
 
-### Execute Redis Commands (CLI Mode)
-- Press `>` to enter command mode (switches to CLI interface)
-- Type any Redis command directly (e.g., `GET mykey`, `SET key value`, `KEYS *`, `DBSIZE`, `INFO`)
-
 ## TODO
 
-- [ ] Import and export functionality
 - [ ] Quick connection switching

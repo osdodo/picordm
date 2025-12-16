@@ -6,7 +6,9 @@ use ratatui::widgets::ListState;
 use tui_textarea::TextArea;
 
 use crate::connection::{ConnectionForm, ConnectionList};
+use crate::file_selector::FileSelector;
 use crate::handler::{self, handle_key_event};
+use crate::impex;
 use crate::service::{DbInfo, RedisService, ServerInfo};
 use crate::storage::{load_connections, save_connections};
 use crate::ui;
@@ -19,6 +21,16 @@ pub enum CurrentScreen {
     NewConnectionForm,
     JsonEditor,
     CommandMode,
+    FileSelector,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProgressDialog {
+    pub title: String,
+    pub message: String,
+    pub is_complete: bool,
+    pub progress: Option<(usize, usize)>, // (current, total)
+    pub completed_at: Option<std::time::Instant>,
 }
 
 pub struct App<'a> {
@@ -78,6 +90,15 @@ pub struct App<'a> {
 
     // Error handling
     pub error_message: Option<String>,
+
+    // Import/Export status
+    pub last_operation_message: Option<String>,
+
+    // Progress dialog
+    pub progress_dialog: Option<ProgressDialog>,
+
+    // File selector
+    pub file_selector: FileSelector,
 }
 
 impl<'a> App<'a> {
@@ -124,6 +145,50 @@ impl<'a> App<'a> {
             error_message: None,
             command_input: String::new(),
             command_output: String::new(),
+            last_operation_message: None,
+            progress_dialog: None,
+            file_selector: FileSelector::new(),
+        }
+    }
+
+    pub async fn run(mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
+        loop {
+            if self.should_execute_connection() {
+                self.connect_to_selected().await?;
+            }
+
+            if self.should_execute_dashboard_data() {
+                self.load_dashboard_data().await?;
+            }
+
+            terminal.draw(|f| ui::draw(f, &mut self))?;
+
+            if event::poll(Duration::from_millis(100))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if handle_key_event(terminal, &mut self, key).await? {
+                            return Ok(());
+                        }
+                    }
+                    Event::Mouse(mouse) => {
+                        handler::handle_mouse_event(terminal, &mut self, mouse).await?;
+                    }
+                    _ => {}
+                }
+            } else {
+                if self.is_connecting
+                    || self.is_loading_server_info
+                    || self.is_loading_value
+                    || self.is_loading_keys
+                {
+                    self.tick_loading();
+                }
+
+                // Auto-hide progress dialog after 3 seconds
+                if self.should_auto_hide_progress_dialog() {
+                    self.hide_progress_dialog();
+                }
+            }
         }
     }
 
@@ -689,10 +754,21 @@ impl<'a> App<'a> {
         }
 
         let keys_to_delete: Vec<String> = self.selected_keys.iter().cloned().collect();
+        let total_keys = keys_to_delete.len();
         let mut deleted_count = 0;
         let mut errors = Vec::new();
 
-        for key in &keys_to_delete {
+        self.update_progress_dialog(
+            format!("Deleting {} keys...", total_keys),
+            Some((0, total_keys)),
+        );
+
+        for (index, key) in keys_to_delete.iter().enumerate() {
+            self.update_progress_dialog(
+                format!("Deleting key: {} ({}/{})", key, index + 1, total_keys),
+                Some((index + 1, total_keys)),
+            );
+
             match self.redis.delete_key(key, self.current_db_index).await {
                 Ok(_) => {
                     deleted_count += 1;
@@ -722,10 +798,15 @@ impl<'a> App<'a> {
             let _ = self.load_server_info().await;
         }
 
-        // Set error or success message
         if errors.is_empty() {
+            self.complete_progress_dialog(format!("Successfully deleted {} keys", deleted_count));
             self.error_message = None;
         } else if deleted_count > 0 {
+            self.complete_progress_dialog(format!(
+                "Deleted {} keys, {} failed",
+                deleted_count,
+                errors.len()
+            ));
             self.error_message = Some(format!(
                 "Deleted {} keys, but {} failed: {}",
                 deleted_count,
@@ -733,6 +814,7 @@ impl<'a> App<'a> {
                 errors.join(", ")
             ));
         } else {
+            self.complete_progress_dialog("Failed to delete keys".to_string());
             self.error_message = Some(format!("Failed to delete keys: {}", errors.join(", ")));
         }
 
@@ -845,39 +927,183 @@ impl<'a> App<'a> {
         }
     }
 
-    pub async fn run(mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
-        loop {
-            if self.should_execute_connection() {
-                self.connect_to_selected().await?;
-            }
+    pub fn show_progress_dialog(&mut self, title: String, message: String) {
+        self.progress_dialog = Some(ProgressDialog {
+            title,
+            message,
+            is_complete: false,
+            progress: None,
+            completed_at: None,
+        });
+    }
 
-            if self.should_execute_dashboard_data() {
-                self.load_dashboard_data().await?;
-            }
+    pub fn update_progress_dialog(&mut self, message: String, progress: Option<(usize, usize)>) {
+        if let Some(ref mut dialog) = self.progress_dialog {
+            dialog.message = message;
+            dialog.progress = progress;
+        }
+    }
 
-            terminal.draw(|f| ui::draw(f, &mut self))?;
+    pub fn complete_progress_dialog(&mut self, message: String) {
+        if let Some(ref mut dialog) = self.progress_dialog {
+            dialog.message = message;
+            dialog.is_complete = true;
+            dialog.completed_at = Some(std::time::Instant::now());
+        }
+    }
 
-            if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        if handle_key_event(terminal, &mut self, key).await? {
-                            return Ok(());
-                        }
-                    }
-                    Event::Mouse(mouse) => {
-                        handler::handle_mouse_event(terminal, &mut self, mouse).await?;
-                    }
-                    _ => {}
-                }
+    pub fn hide_progress_dialog(&mut self) {
+        self.progress_dialog = None;
+    }
+
+    pub fn should_auto_hide_progress_dialog(&self) -> bool {
+        if let Some(ref dialog) = self.progress_dialog {
+            if let Some(completed_at) = dialog.completed_at {
+                dialog.is_complete && completed_at.elapsed().as_secs() >= 3
             } else {
-                if self.is_connecting
-                    || self.is_loading_server_info
-                    || self.is_loading_value
-                    || self.is_loading_keys
-                {
-                    self.tick_loading();
-                }
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn show_file_selector(&mut self) {
+        self.file_selector.show();
+        if !self.file_selector.dir_entries.is_empty() {
+            self.current_screen = CurrentScreen::FileSelector;
+        } else {
+            self.complete_progress_dialog("Cannot access directory".to_string());
+            self.error_message = Some("Cannot access current directory.".to_string());
+        }
+    }
+
+    pub fn next_dir_entry(&mut self) {
+        self.file_selector.next_entry();
+    }
+
+    pub fn previous_dir_entry(&mut self) {
+        self.file_selector.previous_entry();
+    }
+
+    pub fn enter_selected_entry(&mut self) -> Option<std::path::PathBuf> {
+        self.file_selector.enter_selected_entry()
+    }
+
+    pub async fn export_redis_data(&mut self) -> Result<()> {
+        if self.current_connection_name.is_none() {
+            self.complete_progress_dialog("Not connected to Redis".to_string());
+            self.error_message = Some("No Redis connection active".to_string());
+            return Ok(());
+        }
+
+        let connection_name = self.current_connection_name.clone().unwrap_or_default();
+        let database = self.current_db_index;
+        let keys = if self.selected_keys.is_empty() {
+            self.keys.clone()
+        } else {
+            self.selected_keys.iter().cloned().collect()
+        };
+
+        if keys.is_empty() {
+            self.complete_progress_dialog("No keys to export".to_string());
+            self.error_message = Some("No keys to export".to_string());
+            return Ok(());
+        }
+
+        // Update progress dialog (already shown in handler)
+        self.update_progress_dialog(
+            format!("Exporting {} keys", keys.len()),
+            Some((0, keys.len())),
+        );
+
+        let file_path = impex::get_export_path(&format!(
+            "redis_data_{}_{}_db{}_{}.json",
+            connection_name.replace(' ', "_"),
+            chrono::Local::now().format("%Y%m%d_%H%M%S"),
+            database,
+            keys.len()
+        ));
+
+        // Update progress
+        self.update_progress_dialog("Writing to file...".to_string(), Some((0, keys.len())));
+
+        match impex::export_redis_data(&self.redis, connection_name, database, &keys, &file_path)
+            .await
+        {
+            Ok(exported_count) => {
+                let location = if file_path.starts_with(dirs::desktop_dir().unwrap_or_default()) {
+                    "Desktop"
+                } else {
+                    "current directory"
+                };
+
+                self.complete_progress_dialog(format!(
+                    "Exported {} keys to {}",
+                    exported_count, location
+                ));
+
+                self.error_message = None;
+                self.last_operation_message = Some(format!(
+                    "Exported {} keys to {} ({})",
+                    exported_count,
+                    location,
+                    file_path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+            Err(e) => {
+                self.hide_progress_dialog();
+                return Err(e);
             }
         }
+        Ok(())
+    }
+
+    pub async fn import_redis_data(&mut self) -> Result<()> {
+        if self.current_connection_name.is_none() {
+            self.complete_progress_dialog("Not connected to Redis".to_string());
+            self.error_message = Some("No Redis connection active".to_string());
+            return Ok(());
+        }
+
+        let database = self.current_db_index;
+
+        // Get the selected file from file selector
+        let file_path = match self.enter_selected_entry() {
+            Some(path) => path,
+            None => {
+                self.complete_progress_dialog("No file selected".to_string());
+                self.error_message = Some("No import file selected.".to_string());
+                return Ok(());
+            }
+        };
+
+        // Update progress dialog (already shown in handler)
+        self.update_progress_dialog("Reading data...".to_string(), None);
+
+        // For now, we'll import with overwrite=false to be safe
+        match impex::import_redis_data(&self.redis, &file_path, database, false).await {
+            Ok((imported_count, skipped_count)) => {
+                self.complete_progress_dialog(format!("Imported {} keys", imported_count));
+
+                self.error_message = None;
+                self.last_operation_message = Some(format!(
+                    "Imported {} keys, skipped {} existing keys from {}",
+                    imported_count,
+                    skipped_count,
+                    file_path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+
+                // Refresh keys list
+                let _ = self.fetch_keys("*").await;
+                let _ = self.load_server_info().await;
+            }
+            Err(e) => {
+                self.hide_progress_dialog();
+                return Err(e);
+            }
+        }
+
+        Ok(())
     }
 }

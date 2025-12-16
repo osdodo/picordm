@@ -310,7 +310,7 @@ impl RedisService {
         }
 
         let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        
+
         self.execute_retry(move |mut conn| {
             let args = args_owned.clone();
             async move {
@@ -326,11 +326,230 @@ impl RedisService {
                 }
 
                 let result: redis::RedisResult<redis::Value> = cmd.query_async(&mut conn).await;
-                
+
                 match result {
                     Ok(value) => Ok(format_redis_value(&value)),
                     Err(e) => Err(anyhow::anyhow!("{}", e)),
                 }
+            }
+        })
+        .await
+    }
+
+    pub async fn get_key_ttl(&self, key: &str, db_index: u32) -> Result<i64> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(redis::cmd("TTL").arg(key).query_async(&mut conn).await?)
+            }
+        })
+        .await
+    }
+
+    pub async fn key_exists(&self, key: &str, db_index: u32) -> Result<bool> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                let exists: i32 = redis::cmd("EXISTS").arg(key).query_async(&mut conn).await?;
+                Ok(exists > 0)
+            }
+        })
+        .await
+    }
+
+    pub async fn set_key_ttl(&self, key: &str, ttl: i64, db_index: u32) -> Result<()> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                let _: () = redis::cmd("EXPIRE")
+                    .arg(key)
+                    .arg(ttl)
+                    .query_async(&mut conn)
+                    .await?;
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    // Type-specific getters for export
+    pub async fn get_list_values(&self, key: &str, db_index: u32) -> Result<Vec<String>> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(conn.lrange(&key, 0, -1).await?)
+            }
+        })
+        .await
+    }
+
+    pub async fn get_set_values(&self, key: &str, db_index: u32) -> Result<Vec<String>> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(conn.smembers(&key).await?)
+            }
+        })
+        .await
+    }
+
+    pub async fn get_zset_values(&self, key: &str, db_index: u32) -> Result<Vec<(String, f64)>> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(conn.zrange_withscores(&key, 0, -1).await?)
+            }
+        })
+        .await
+    }
+
+    pub async fn get_hash_values(
+        &self,
+        key: &str,
+        db_index: u32,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let key = key.to_string();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                Ok(conn.hgetall(&key).await?)
+            }
+        })
+        .await
+    }
+
+    // Type-specific setters for import
+    pub async fn set_list_values(&self, key: &str, values: &[String], db_index: u32) -> Result<()> {
+        let key = key.to_string();
+        let values = values.to_vec();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            let values = values.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                // Delete existing key first
+                let _: () = conn.del(&key).await?;
+                // Add all values
+                if !values.is_empty() {
+                    let _: usize = conn.lpush(&key, &values).await?;
+                }
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    pub async fn set_set_values(&self, key: &str, values: &[String], db_index: u32) -> Result<()> {
+        let key = key.to_string();
+        let values = values.to_vec();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            let values = values.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                // Delete existing key first
+                let _: () = conn.del(&key).await?;
+                // Add all values
+                if !values.is_empty() {
+                    let _: usize = conn.sadd(&key, &values).await?;
+                }
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    pub async fn set_zset_values(
+        &self,
+        key: &str,
+        values: &[(String, f64)],
+        db_index: u32,
+    ) -> Result<()> {
+        let key = key.to_string();
+        let values = values.to_vec();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            let values = values.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                // Delete existing key first
+                let _: () = conn.del(&key).await?;
+                // Add all values
+                for (member, score) in values {
+                    let _: usize = conn.zadd(&key, &member, score).await?;
+                }
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    pub async fn set_hash_values(
+        &self,
+        key: &str,
+        values: &[(String, String)],
+        db_index: u32,
+    ) -> Result<()> {
+        let key = key.to_string();
+        let values = values.to_vec();
+        self.execute_retry(move |mut conn| {
+            let key = key.clone();
+            let values = values.clone();
+            async move {
+                redis::cmd("SELECT")
+                    .arg(db_index)
+                    .query_async::<()>(&mut conn)
+                    .await?;
+                // Delete existing key first
+                let _: () = conn.del(&key).await?;
+                // Add all values
+                if !values.is_empty() {
+                    let _: () = conn.hset_multiple(&key, &values).await?;
+                }
+                Ok(())
             }
         })
         .await
@@ -360,14 +579,20 @@ fn format_redis_value(value: &redis::Value) -> String {
         redis::Value::Map(map) => {
             let mut result = String::new();
             for (key, val) in map {
-                result.push_str(&format!("{}: {}\n", format_redis_value(key), format_redis_value(val)));
+                result.push_str(&format!(
+                    "{}: {}\n",
+                    format_redis_value(key),
+                    format_redis_value(val)
+                ));
             }
             result
         }
         redis::Value::Attribute { data, attributes } => {
-            format!("Data: {}\nAttributes: {}", 
-                format_redis_value(data), 
-                format_redis_value(&redis::Value::Map(attributes.clone())))
+            format!(
+                "Data: {}\nAttributes: {}",
+                format_redis_value(data),
+                format_redis_value(&redis::Value::Map(attributes.clone()))
+            )
         }
         redis::Value::Set(set) => {
             let mut result = String::new();
