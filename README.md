@@ -64,3 +64,4 @@ To copy text from the interface, use your terminal's text selection feature:
 ## TODO
 
 - [ ] Quick connection switching
+- [ ] Cluster support
