@@ -59,10 +59,6 @@ impl ConnectionList {
         &mut self.state
     }
 
-    pub fn selected(&self) -> Option<usize> {
-        self.state.selected()
-    }
-
     pub fn selected_connection(&self) -> Option<&ConnectionConfig> {
         self.state.selected().and_then(|i| self.connections.get(i))
     }

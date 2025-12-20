@@ -2,10 +2,10 @@ use std::sync::OnceLock;
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
@@ -26,11 +26,6 @@ fn get_syntax_set() -> &'static SyntaxSet {
 
 fn get_theme_set() -> &'static ThemeSet {
     THEME_SET.get_or_init(ThemeSet::load_defaults)
-}
-
-fn get_spinner_frame(f: usize) -> &'static str {
-    const BRAILLE_SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    BRAILLE_SPINNER[f % BRAILLE_SPINNER.len()]
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -69,6 +64,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_new_connection_form(frame, app, popup_area);
     }
 
+    // Connection switcher overlay
+    if app.current_screen == CurrentScreen::ConnectionSwitcher {
+        let connections = app.connection_list.connections();
+        // Calculate height: title(1) + borders(2) + help(1) + spacing(1) + list items
+        let list_height = (connections.len() as u16).min(12);
+        let popup_height = list_height + 5; // borders + title + help + spacing
+        let popup_width = 70; // Wider for better readability
+        let popup_area = centered_rect_fixed_height(popup_width, popup_height, size);
+        frame.render_widget(Clear, popup_area);
+        render_connection_switcher(frame, app, popup_area);
+    }
+
     // Delete confirmation dialog
     if app.is_delete_confirmation_open {
         let popup_area = centered_rect_fixed_height(60, 8, size);
@@ -87,7 +94,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut header_spans = vec![];
 
-    if let Some(conn_name) = &app.current_connection_name {
+    // Show connecting status with target connection name
+    if app.is_connecting {
+        if let Some(conn) = app.connection_list.selected_connection() {
+            header_spans.extend(vec![
+                Span::styled("Connecting to ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    &conn.name,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ...", Style::default().fg(Color::Yellow)),
+            ]);
+        } else {
+            header_spans.push(Span::styled(
+                "Connecting...",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    } else if let Some(conn_name) = &app.current_connection_name {
         if let Some(info) = &app.server_info {
             let uptime = format_uptime(info.uptime_seconds);
             let memory = format_memory(info.used_memory);
@@ -158,13 +184,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.is_loading_server_info {
         header_spans.extend(vec![
             Span::raw("  |  "),
-            Span::styled("Loading ", Style::default().fg(Color::Yellow)),
-            Span::styled(
-                get_spinner_frame(app.loading_frame),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Loading...", Style::default().fg(Color::Yellow)),
         ]);
     }
 
@@ -251,7 +271,7 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn render_connection_content(frame: &mut Frame, _app: &App, area: Rect) {
+fn render_connection_content(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -263,7 +283,20 @@ fn render_connection_content(frame: &mut Frame, _app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
 
-    let paragraph = Paragraph::new("Select a connection to start")
+    // Display error message if present, otherwise show default prompt
+    let content = if let Some(err) = &app.error_message {
+        Span::styled(
+            format!("Error: {}", err),
+            Style::default().fg(Color::Red),
+        )
+    } else {
+        Span::styled(
+            "Select a connection to start",
+            Style::default().fg(Color::White),
+        )
+    };
+
+    let paragraph = Paragraph::new(content)
         .block(block)
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
@@ -306,16 +339,7 @@ fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
         && (app.current_screen == CurrentScreen::Dashboard
             || app.current_screen == CurrentScreen::KeyContent)
     {
-        let loading_text = Line::from(vec![
-            Span::styled(
-                get_spinner_frame(app.loading_frame),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled("Loading value...", Style::default().fg(Color::Yellow)),
-        ]);
+        let loading_text = Span::styled("Loading value...", Style::default().fg(Color::Yellow));
         let paragraph = Paragraph::new(loading_text)
             .block(block)
             .alignment(ratatui::layout::Alignment::Center);
@@ -499,11 +523,6 @@ fn highlight_json_with_syntect(
 }
 
 fn render_connection_list(frame: &mut Frame, app: &mut App, area: Rect) {
-    let selected_idx = app.connection_list.selected();
-    let is_connecting = app.is_connecting;
-    let is_connection_list_screen = app.current_screen == CurrentScreen::ConnectionList;
-    let loading_frame = app.loading_frame;
-
     let connection_names: Vec<String> = app
         .connection_list
         .connections()
@@ -513,39 +532,15 @@ fn render_connection_list(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let items: Vec<ListItem> = connection_names
         .iter()
-        .enumerate()
-        .map(|(idx, name)| {
-            let is_selected = selected_idx == Some(idx);
-            let name_line = if is_connecting && is_selected && is_connection_list_screen {
-                Line::from(vec![
-                    Span::styled(
-                        get_spinner_frame(loading_frame),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(name, Style::default().add_modifier(Modifier::BOLD)),
-                ])
-            } else {
-                Line::from(Span::styled(
-                    name,
-                    Style::default().add_modifier(Modifier::BOLD),
-                ))
-            };
+        .map(|name| {
+            let name_line = Line::from(Span::styled(
+                name,
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
 
             ListItem::new(name_line)
         })
         .collect();
-
-    let title = if is_connecting && is_connection_list_screen {
-        format!(
-            "Connections - Connecting {}",
-            get_spinner_frame(loading_frame)
-        )
-    } else {
-        "Connections".to_string()
-    };
 
     let list = List::new(items)
         .block(
@@ -554,7 +549,7 @@ fn render_connection_list(frame: &mut Frame, app: &mut App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
                 .title(Span::styled(
-                    title,
+                    "Connections",
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
@@ -776,16 +771,7 @@ fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_keys_list(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.is_loading_keys {
-        let loading_text = Line::from(vec![
-            Span::styled(
-                get_spinner_frame(app.loading_frame),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled("Loading keys...", Style::default().fg(Color::Yellow)),
-        ]);
+        let loading_text = Span::styled("Loading keys...", Style::default().fg(Color::Yellow));
         let loading_widget = Paragraph::new(loading_text)
             .alignment(ratatui::layout::Alignment::Center)
             .block(
@@ -976,23 +962,26 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                         "Esc: Exit Search | Space: Toggle | Ctrl+a: Select/Clear All | Enter: Select | Arrow: Navigate"
                     }
                     _ if !app.current_value.is_empty() && app.is_json_content => {
-                        "e: Edit JSON | b: Back | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | Ctrl+e: Export | Ctrl+l: Import"
+                        "e: Edit JSON | b: Back | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ if !app.selected_keys.is_empty() => {
-                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ => {
-                        "Space: Select | b: Back | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: DB | Ctrl+r: Refresh | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Select | b: Back | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: Switch DB | Ctrl+r: Refresh | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                 }
             }
         }
         CurrentScreen::KeyContent => {
-            "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
+            "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
         }
         CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
         CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",
         CurrentScreen::FileSelector => "↑↓: Navigate | Enter: Import | Esc: Cancel",
+        CurrentScreen::ConnectionSwitcher => {
+            "↑↓: Navigate | Type: Search | 1-9: Quick Select | Enter: Switch | Esc: Cancel"
+        }
     };
 
     let status = format!(" {}", status_text);
@@ -1677,6 +1666,265 @@ fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+fn render_connection_switcher(frame: &mut Frame, app: &App, area: Rect) {
+    let total_connections = app.connection_list.connections().len();
+    let filtered_connections = app.get_filtered_connections();
+    let is_filtering = !app.connection_switcher_search.is_empty();
+
+    let title = if is_filtering {
+        format!(
+            "⚡ Quick Connection Switch ({}/{} connections)",
+            filtered_connections.len(),
+            total_connections
+        )
+    } else {
+        format!(
+            "⚡ Quick Connection Switch ({} connections)",
+            total_connections
+        )
+    };
+
+    let block = Block::default()
+        .title(Line::from(vec![Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Rgb(147, 112, 219))
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
+        .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+    frame.render_widget(block, area);
+
+    // Split area for search, list and help text
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Search box
+            Constraint::Min(1),    // List area
+            Constraint::Length(1), // Help text
+        ])
+        .split(inner);
+
+    // Render search box
+    let search_text = if is_filtering {
+        Span::styled(
+            format!("Search: {}", app.connection_switcher_search),
+            Style::default().fg(Color::White),
+        )
+    } else {
+        Span::styled("Type to search...", Style::default().fg(Color::DarkGray))
+    };
+    frame.render_widget(Paragraph::new(Line::from(vec![search_text])), chunks[0]);
+
+    // Build connection list items
+    let items: Vec<ListItem> = filtered_connections
+        .iter()
+        .map(|(original_idx, conn)| {
+            let is_current = app
+                .current_connection_name
+                .as_ref()
+                .map(|name| name == &conn.name)
+                .unwrap_or(false);
+
+            let name_style = if is_current {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let mut spans = vec![];
+
+            // Number prefix - show for all connections when not filtering
+            // But only 1-9 support quick select via number keys
+            if !is_filtering {
+                let num_str = format!("{:2} ", original_idx + 1);
+                let num_style = if *original_idx < 9 {
+                    // 1-9: Highlight to indicate quick select support
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    // 10+: Dimmed to indicate no quick select
+                    Style::default().fg(Color::Rgb(60, 60, 60))
+                };
+                spans.push(Span::styled(num_str, num_style));
+            } else {
+                spans.push(Span::styled("   ", Style::default()));
+            }
+
+            // Current connection indicator
+            spans.push(if is_current {
+                Span::styled("● ", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("  ", Style::default())
+            });
+
+            // Connection name with optional highlighting
+            if is_filtering {
+                let filter_lower = app.connection_switcher_search.to_lowercase();
+                let name_lower = conn.name.to_lowercase();
+
+                if let Some(pos) = name_lower.find(&filter_lower) {
+                    spans.push(Span::styled(&conn.name[..pos], name_style));
+                    spans.push(Span::styled(
+                        &conn.name[pos..pos + app.connection_switcher_search.len()],
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                    ));
+                    spans.push(Span::styled(
+                        &conn.name[pos + app.connection_switcher_search.len()..],
+                        name_style,
+                    ));
+                } else {
+                    spans.push(Span::styled(&conn.name, name_style));
+                }
+            } else {
+                spans.push(Span::styled(&conn.name, name_style));
+            }
+
+            // Connection details
+            spans.push(Span::styled(
+                format!(" ({}:{})", conn.host, conn.port),
+                Style::default().fg(Color::DarkGray),
+            ));
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    // Render list
+    let list_widget = if items.is_empty() {
+        List::new(vec![ListItem::new(Line::from(Span::styled(
+            "No matching connections",
+            Style::default().fg(Color::Yellow),
+        )))])
+    } else {
+        List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(147, 112, 219))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▶ ")
+    };
+
+    // Create a temporary ListState for rendering
+    // The connection_switcher_state stores original indices, but we need filtered indices
+    let mut render_state = ListState::default();
+    if let Some(selected_original_idx) = app.connection_switcher_state.selected() {
+        // Find the position of the selected item in the filtered list
+        let filtered_pos = filtered_connections
+            .iter()
+            .position(|(idx, _)| *idx == selected_original_idx);
+        render_state.select(filtered_pos);
+    }
+
+    frame.render_stateful_widget(list_widget, chunks[1], &mut render_state);
+
+    // Build help text
+    let purple = Color::Rgb(147, 112, 219);
+    let gray = Color::DarkGray;
+    let selected_idx = app.connection_switcher_state.selected().unwrap_or(0);
+
+    let help_spans = if is_filtering {
+        vec![
+            Span::styled(
+                "↑↓",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Navigate  ", Style::default().fg(gray)),
+            Span::styled(
+                "Backspace",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Clear  ", Style::default().fg(gray)),
+            Span::styled(
+                "Enter",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Switch  ", Style::default().fg(gray)),
+            Span::styled(
+                "Esc",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Cancel", Style::default().fg(gray)),
+        ]
+    } else if total_connections > 9 {
+        vec![
+            Span::styled(
+                "↑↓",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Nav  ", Style::default().fg(gray)),
+            Span::styled(
+                "1-9",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Quick  ", Style::default().fg(gray)),
+            Span::styled(
+                "Type",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Search  ", Style::default().fg(gray)),
+            Span::styled(
+                "Enter",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Switch  ", Style::default().fg(gray)),
+            Span::styled(
+                "Esc",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Cancel  ", Style::default().fg(gray)),
+            Span::styled(
+                format!("[{}/{}]", selected_idx + 1, total_connections),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]
+    } else {
+        vec![
+            Span::styled(
+                "↑↓",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Navigate  ", Style::default().fg(gray)),
+            Span::styled(
+                "1-9",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Quick select  ", Style::default().fg(gray)),
+            Span::styled(
+                "Type",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Search  ", Style::default().fg(gray)),
+            Span::styled(
+                "Enter",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Switch  ", Style::default().fg(gray)),
+            Span::styled(
+                "Esc",
+                Style::default().fg(purple).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Cancel", Style::default().fg(gray)),
+        ]
+    };
+
+    frame.render_widget(
+        Paragraph::new(Line::from(help_spans)).alignment(ratatui::layout::Alignment::Center),
+        chunks[2],
+    );
+}
+
 fn render_delete_confirmation(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(Line::from(vec![Span::styled(
@@ -1798,16 +2046,10 @@ fn render_progress_dialog(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             vec![
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        get_spinner_frame(app.loading_frame),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(&dialog.message, Style::default().fg(Color::White)),
-                ]),
+                Line::from(Span::styled(
+                    &dialog.message,
+                    Style::default().fg(Color::White),
+                )),
             ]
         };
 

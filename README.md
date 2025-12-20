@@ -10,9 +10,10 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 
 - **Lightweight** - Fast performance with minimal memory usage
 - **Connection Management** - Multiple Redis connections with TLS/SSL support
+- **Quick Connection Switcher** - Fast connection switching
 - **Key Browser** - Search, filter, and manage Redis keys
-- **Server Monitoring** - Real-time server stats (uptime, memory, clients, keys)
-- **Command Interface** - Execute Redis commands directly (`>` to enter CLI mode)
+- **Server Monitoring** - Real-time server stats
+- **Command Interface** - Execute Redis commands directly
 - **Import/Export** - JSON data import/export with full Redis type support
 
 ## Installation
@@ -52,6 +53,7 @@ redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni admin:sec
 - `>` - Enter command mode
 - `/` - Search keys
 - `Esc` - Exit current mode
+- `Ctrl+t` - Quick connection switch
 
 ### Copy Text
 
@@ -63,5 +65,4 @@ To copy text from the interface, use your terminal's text selection feature:
 
 ## TODO
 
-- [ ] Quick connection switching
 - [ ] Cluster support

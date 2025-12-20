@@ -48,6 +48,9 @@ pub async fn handle_key_event(
         CurrentScreen::FileSelector => {
             handle_file_selector(terminal, app, key).await?;
         }
+        CurrentScreen::ConnectionSwitcher => {
+            handle_connection_switcher(terminal, app, key).await?;
+        }
         CurrentScreen::JsonEditor => {
             // Already handled above
         }
@@ -86,6 +89,7 @@ async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
             if app.is_searching_keys
                 || app.current_screen == CurrentScreen::CommandMode
                 || app.current_screen == CurrentScreen::NewConnectionForm
+                || app.current_screen == CurrentScreen::ConnectionSwitcher
             {
                 return false;
             }
@@ -94,6 +98,15 @@ async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
                 app.disconnect_and_return_to_list().await;
             } else if app.current_screen == CurrentScreen::KeyContent {
                 app.current_screen = CurrentScreen::Dashboard;
+            }
+            false
+        }
+        KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Quick connection switcher - only available in Dashboard and KeyContent
+            if app.current_screen == CurrentScreen::Dashboard
+                || app.current_screen == CurrentScreen::KeyContent
+            {
+                app.show_connection_switcher();
             }
             false
         }
@@ -300,6 +313,7 @@ async fn handle_db_selector(
                     app.is_loading_keys = true;
                     terminal.draw(|f| ui::draw(f, app))?;
                     app.switch_db(db_index).await?;
+                    app.is_loading_keys = false;
                 }
             }
             app.is_db_selector_open = false;
@@ -401,6 +415,7 @@ async fn handle_key_search(
                             app.is_loading_value = true;
                             terminal.draw(|f| ui::draw(f, app))?;
                             app.fetch_value(true).await?;
+                            app.is_loading_value = false;
                         }
                     }
                 }
@@ -488,9 +503,12 @@ async fn handle_dashboard_normal(
             app.is_loading_server_info = true;
             terminal.draw(|f| ui::draw(f, app))?;
             let _ = app.load_server_info().await;
+            app.is_loading_server_info = false;
         }
         KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+            if app.current_screen == CurrentScreen::Dashboard
+                || app.current_screen == CurrentScreen::KeyContent
+            {
                 // Show progress dialog and start export
                 app.show_progress_dialog("Export Data".to_string(), "Preparing...".to_string());
                 terminal.draw(|f| ui::draw(f, app))?;
@@ -500,7 +518,9 @@ async fn handle_dashboard_normal(
             }
         }
         KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if app.current_screen == CurrentScreen::Dashboard || app.current_screen == CurrentScreen::KeyContent {
+            if app.current_screen == CurrentScreen::Dashboard
+                || app.current_screen == CurrentScreen::KeyContent
+            {
                 app.show_file_selector();
             }
         }
@@ -557,10 +577,14 @@ async fn handle_dashboard_normal(
             }
         }
         KeyCode::Enter => {
-            if app.current_screen == CurrentScreen::Dashboard {
+            if app.current_screen == CurrentScreen::Dashboard
+                && !app.keys.is_empty()
+                && app.key_list_state.selected().is_some()
+            {
                 app.is_loading_value = true;
                 terminal.draw(|f| ui::draw(f, app))?;
                 app.fetch_value(true).await?;
+                app.is_loading_value = false;
             }
         }
         // Ignore all other character inputs to prevent unexpected actions during paste.
@@ -736,6 +760,7 @@ async fn handle_keys_list_click(
                 app.is_loading_value = true;
                 terminal.draw(|f| ui::draw(f, app))?;
                 app.fetch_value(true).await?;
+                app.is_loading_value = false;
             }
         }
     }
@@ -775,6 +800,52 @@ async fn handle_file_selector(
             // If it was a directory, the method already handled navigation
         }
 
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_connection_switcher(
+    terminal: &mut DefaultTerminal,
+    app: &mut App<'_>,
+    key: KeyEvent,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            app.hide_connection_switcher();
+        }
+        KeyCode::Down => {
+            app.next_connection_in_switcher();
+        }
+        KeyCode::Up => {
+            app.previous_connection_in_switcher();
+        }
+        KeyCode::Enter => {
+            terminal.draw(|f| ui::draw(f, app))?;
+            app.switch_to_selected_connection().await?;
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() && app.connection_switcher_search.is_empty() => {
+            let num = c.to_digit(10).unwrap() as usize;
+            if num > 0 && num <= app.connection_list.connections().len().min(9) {
+                app.connection_switcher_state.select(Some(num - 1));
+                terminal.draw(|f| ui::draw(f, app))?;
+                app.switch_to_selected_connection().await?;
+            }
+        }
+        KeyCode::Char(c) => {
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER)
+            {
+                app.connection_switcher_search.push(c);
+
+                // Always select first filtered item after input
+                let filtered = app.get_filtered_connections();
+                if let Some((idx, _)) = filtered.first() {
+                    app.connection_switcher_state.select(Some(*idx));
+                }
+            }
+        }
         _ => {}
     }
     Ok(())

@@ -22,6 +22,7 @@ pub enum CurrentScreen {
     JsonEditor,
     CommandMode,
     FileSelector,
+    ConnectionSwitcher,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,8 @@ pub struct App<'a> {
     // Connections management
     pub connection_list: ConnectionList,
     pub connection_form: ConnectionForm,
+    pub connection_switcher_state: ListState,
+    pub connection_switcher_search: String,
 
     // Database management
     pub db_list: Vec<DbInfo>,
@@ -81,10 +84,6 @@ pub struct App<'a> {
     pub is_loading_server_info: bool,
     pub is_loading_value: bool,
 
-    // Loading animation
-    pub loading_frame: usize,
-    pub connection_delay_frames: usize,
-
     // Scroll throttling
     pub last_scroll_time: std::time::Instant,
 
@@ -118,6 +117,8 @@ impl<'a> App<'a> {
             server_info: None,
             connection_list,
             connection_form: ConnectionForm::default(),
+            connection_switcher_state: ListState::default(),
+            connection_switcher_search: String::new(),
             db_list: Vec::new(),
             current_db_index: 0,
             is_db_selector_open: false,
@@ -139,8 +140,6 @@ impl<'a> App<'a> {
             is_loading_keys: false,
             is_loading_server_info: false,
             is_loading_value: false,
-            loading_frame: 0,
-            connection_delay_frames: 0,
             last_scroll_time: std::time::Instant::now(),
             error_message: None,
             command_input: String::new(),
@@ -153,16 +152,35 @@ impl<'a> App<'a> {
 
     pub async fn run(mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
         loop {
-            if self.should_execute_connection() {
+            // Handle pending connection
+            if self.pending_connection {
+                self.pending_connection = false;
+
+                self.is_connecting = true;
+                terminal.draw(|f| ui::draw(f, &mut self))?;
                 self.connect_to_selected().await?;
+                self.is_connecting = false;
             }
 
-            if self.should_execute_dashboard_data() {
-                self.load_dashboard_data().await?;
+            // Handle pending dashboard data
+            if self.pending_dashboard_data && self.current_screen == CurrentScreen::Dashboard {
+                self.pending_dashboard_data = false;
+
+                self.is_loading_keys = true;
+                self.is_loading_server_info = true;
+                terminal.draw(|f| ui::draw(f, &mut self))?;
+
+                let _ = self.fetch_keys("*").await;
+                self.is_loading_keys = false;
+
+                let _ = self.load_server_info().await;
+                self.is_loading_server_info = false;
             }
 
+            // Draw the screen
             terminal.draw(|f| ui::draw(f, &mut self))?;
 
+            // Handle events
             if event::poll(Duration::from_millis(100))? {
                 match event::read()? {
                     Event::Key(key) => {
@@ -176,14 +194,6 @@ impl<'a> App<'a> {
                     _ => {}
                 }
             } else {
-                if self.is_connecting
-                    || self.is_loading_server_info
-                    || self.is_loading_value
-                    || self.is_loading_keys
-                {
-                    self.tick_loading();
-                }
-
                 // Auto-hide progress dialog after 3 seconds
                 if self.should_auto_hide_progress_dialog() {
                     self.hide_progress_dialog();
@@ -194,9 +204,7 @@ impl<'a> App<'a> {
 
     pub fn start_connection(&mut self) {
         self.pending_connection = true;
-        self.is_connecting = true;
         self.error_message = None;
-        self.connection_delay_frames = 8;
 
         // Clear previous connection state
         self.current_value.clear();
@@ -204,32 +212,7 @@ impl<'a> App<'a> {
         self.scroll_offset = 0;
     }
 
-    pub fn should_execute_connection(&mut self) -> bool {
-        if self.pending_connection && self.connection_delay_frames > 0 {
-            self.connection_delay_frames -= 1;
-            false
-        } else {
-            self.pending_connection
-        }
-    }
-
-    pub fn should_execute_dashboard_data(&mut self) -> bool {
-        self.pending_dashboard_data && self.current_screen == CurrentScreen::Dashboard
-    }
-
-    pub async fn load_dashboard_data(&mut self) -> Result<()> {
-        self.pending_dashboard_data = false;
-
-        let _ = self.fetch_keys("*").await;
-
-        let _ = self.load_server_info().await;
-
-        Ok(())
-    }
-
     pub async fn connect_to_selected(&mut self) -> Result<()> {
-        self.pending_connection = false;
-
         if let Some(conn) = self.connection_list.selected_connection() {
             let mut url_str = if conn.use_tls {
                 "rediss://".to_string()
@@ -256,8 +239,6 @@ impl<'a> App<'a> {
 
             match self.redis.connect(&url_str).await {
                 Ok(_) => {
-                    self.is_connecting = false;
-                    self.loading_frame = 0;
                     self.current_db_index = 0; // Reset to db0 on new connection
 
                     // Switch to Dashboard after successful connection
@@ -266,12 +247,8 @@ impl<'a> App<'a> {
 
                     // Need to load dashboard data - set loading indicators
                     self.pending_dashboard_data = true;
-                    self.is_loading_keys = true;
-                    self.is_loading_server_info = true;
                 }
                 Err(e) => {
-                    self.is_connecting = false;
-                    self.loading_frame = 0;
                     self.error_message = Some(format!("Connection failed: {}", e));
                     // Go back to connection list on error
                     self.current_screen = CurrentScreen::ConnectionList;
@@ -298,7 +275,6 @@ impl<'a> App<'a> {
                 self.error_message = Some(e.to_string());
             }
         }
-        self.is_loading_keys = false;
         Ok(())
     }
 
@@ -344,7 +320,6 @@ impl<'a> App<'a> {
                 self.error_message = Some(e.to_string());
             }
         }
-        self.is_loading_value = false;
         Ok(())
     }
 
@@ -389,12 +364,6 @@ impl<'a> App<'a> {
         }
         self.last_scroll_time = now;
         self.scroll_offset = self.scroll_offset.saturating_add(2);
-    }
-
-    pub fn tick_loading(&mut self) {
-        // Use a large cycle to support different spinner lengths
-        // The actual spinner in ui module will use modulo based on its own length
-        self.loading_frame = (self.loading_frame + 1) % 1000;
     }
 
     pub fn next_connection(&mut self) {
@@ -509,11 +478,9 @@ impl<'a> App<'a> {
                 } else {
                     self.db_selector_state.select(Some(0));
                 }
-                self.is_loading_server_info = false;
                 Ok(())
             }
             Err(e) => {
-                self.is_loading_server_info = false;
                 self.error_message = Some(format!("Failed to get server info: {}", e));
                 Err(e)
             }
@@ -1104,6 +1071,141 @@ impl<'a> App<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn show_connection_switcher(&mut self) {
+        if self.connection_list.connections().is_empty() {
+            self.error_message = Some("No connections available".to_string());
+            return;
+        }
+
+        self.current_screen = CurrentScreen::ConnectionSwitcher;
+        self.connection_switcher_search.clear();
+
+        // Initialize switcher state - select current connection if available
+        if let Some(current_name) = &self.current_connection_name {
+            if let Some(index) = self
+                .connection_list
+                .connections()
+                .iter()
+                .position(|conn| &conn.name == current_name)
+            {
+                self.connection_switcher_state.select(Some(index));
+            } else {
+                self.connection_switcher_state.select(Some(0));
+            }
+        } else {
+            self.connection_switcher_state.select(Some(0));
+        }
+    }
+
+    pub fn hide_connection_switcher(&mut self) {
+        // Return to Dashboard (switcher is only accessible from Dashboard/KeyContent)
+        // After switching connection, we always go to Dashboard anyway
+        self.current_screen = CurrentScreen::Dashboard;
+        self.connection_switcher_search.clear();
+    }
+
+    pub fn get_filtered_connections(&self) -> Vec<(usize, &crate::connection::ConnectionConfig)> {
+        let connections = self.connection_list.connections();
+        if self.connection_switcher_search.is_empty() {
+            connections.iter().enumerate().collect()
+        } else {
+            let input_lower = self.connection_switcher_search.to_lowercase();
+            connections
+                .iter()
+                .enumerate()
+                .filter(|(_, conn)| {
+                    conn.name.to_lowercase().contains(&input_lower)
+                        || conn.host.to_lowercase().contains(&input_lower)
+                })
+                .collect()
+        }
+    }
+
+    pub fn next_connection_in_switcher(&mut self) {
+        let filtered = self.get_filtered_connections();
+        if filtered.is_empty() {
+            return;
+        }
+
+        // Find current position in filtered list
+        let current_selected = self.connection_switcher_state.selected();
+        let current_pos =
+            current_selected.and_then(|sel| filtered.iter().position(|(idx, _)| *idx == sel));
+
+        // Calculate next position in filtered list
+        let next_pos = match current_pos {
+            Some(pos) if pos < filtered.len() - 1 => pos + 1,
+            _ => 0, // Wrap to beginning or start from beginning if not found
+        };
+
+        // Update selection to the original index of the next filtered item
+        if let Some((original_idx, _)) = filtered.get(next_pos) {
+            self.connection_switcher_state.select(Some(*original_idx));
+        }
+    }
+
+    pub fn previous_connection_in_switcher(&mut self) {
+        let filtered = self.get_filtered_connections();
+        if filtered.is_empty() {
+            return;
+        }
+
+        // Find current position in filtered list
+        let current_selected = self.connection_switcher_state.selected();
+        let current_pos =
+            current_selected.and_then(|sel| filtered.iter().position(|(idx, _)| *idx == sel));
+
+        // Calculate previous position in filtered list
+        let prev_pos = match current_pos {
+            Some(0) => filtered.len() - 1, // Wrap to end
+            Some(pos) => pos - 1,
+            None => filtered.len() - 1, // Start from end if not found
+        };
+
+        // Update selection to the original index of the previous filtered item
+        if let Some((original_idx, _)) = filtered.get(prev_pos) {
+            self.connection_switcher_state.select(Some(*original_idx));
+        }
+    }
+
+    pub async fn switch_to_selected_connection(&mut self) -> Result<()> {
+        if let Some(selected_idx) = self.connection_switcher_state.selected() {
+            if let Some(conn) = self.connection_list.connections().get(selected_idx) {
+                // Don't switch if it's the same connection
+                if let Some(current_name) = &self.current_connection_name {
+                    if &conn.name == current_name {
+                        self.hide_connection_switcher();
+                        return Ok(());
+                    }
+                }
+
+                // Disconnect from current connection first
+                self.redis.disconnect().await;
+
+                // Clear current state
+                self.current_connection_name = None;
+                self.keys.clear();
+                self.current_value.clear();
+                self.is_json_content = false;
+                self.scroll_offset = 0;
+                self.server_info = None;
+                self.db_list.clear();
+                self.current_db_index = 0;
+                self.selected_keys.clear();
+                self.key_search_filter.clear();
+                self.is_searching_keys = false;
+
+                // Update connection list selection to match switcher
+                self.connection_list.state().select(Some(selected_idx));
+
+                // Hide switcher and start connection process
+                self.hide_connection_switcher();
+                self.start_connection();
+            }
+        }
         Ok(())
     }
 }
