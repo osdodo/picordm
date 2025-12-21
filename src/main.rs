@@ -9,8 +9,6 @@ mod storage;
 mod ui;
 
 use anyhow::Result;
-use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use ratatui::crossterm::execute;
 
 use crate::app::App;
 
@@ -26,11 +24,7 @@ async fn main() -> Result<()> {
     }
 
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout(), EnableMouseCapture)?;
-
     let result = App::new().run(&mut terminal).await;
-
-    execute!(std::io::stdout(), DisableMouseCapture)?;
     ratatui::restore();
 
     result

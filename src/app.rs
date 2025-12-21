@@ -7,7 +7,7 @@ use tui_textarea::TextArea;
 
 use crate::connection::{ConnectionForm, ConnectionList};
 use crate::file_selector::FileSelector;
-use crate::handler::{self, handle_key_event};
+use crate::handler::handle_key_event;
 use crate::impex;
 use crate::service::{DbInfo, RedisService, ServerInfo};
 use crate::storage::{load_connections, save_connections};
@@ -84,9 +84,6 @@ pub struct App<'a> {
     pub is_loading_server_info: bool,
     pub is_loading_value: bool,
 
-    // Scroll throttling
-    pub last_scroll_time: std::time::Instant,
-
     // Error handling
     pub error_message: Option<String>,
 
@@ -140,7 +137,6 @@ impl<'a> App<'a> {
             is_loading_keys: false,
             is_loading_server_info: false,
             is_loading_value: false,
-            last_scroll_time: std::time::Instant::now(),
             error_message: None,
             command_input: String::new(),
             command_output: String::new(),
@@ -187,9 +183,6 @@ impl<'a> App<'a> {
                         if handle_key_event(terminal, &mut self, key).await? {
                             return Ok(());
                         }
-                    }
-                    Event::Mouse(mouse) => {
-                        handler::handle_mouse_event(terminal, &mut self, mouse).await?;
                     }
                     _ => {}
                 }
@@ -372,22 +365,10 @@ impl<'a> App<'a> {
     }
 
     pub fn scroll_up(&mut self) {
-        // Throttle: only allow scroll every 100ms to handle trackpad inertia
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
-            return;
-        }
-        self.last_scroll_time = now;
         self.scroll_offset = self.scroll_offset.saturating_sub(2);
     }
 
     pub fn scroll_down(&mut self) {
-        // Throttle: only allow scroll every 100ms to handle trackpad inertia
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
-            return;
-        }
-        self.last_scroll_time = now;
         self.scroll_offset = self.scroll_offset.saturating_add(2);
     }
 
@@ -416,12 +397,6 @@ impl<'a> App<'a> {
     }
 
     pub fn next_key(&mut self) {
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
-            return;
-        }
-        self.last_scroll_time = now;
-
         if self.keys.is_empty() {
             return;
         }
@@ -439,12 +414,6 @@ impl<'a> App<'a> {
     }
 
     pub fn previous_key(&mut self) {
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_scroll_time).as_millis() < 16 {
-            return;
-        }
-        self.last_scroll_time = now;
-
         if self.keys.is_empty() {
             return;
         }

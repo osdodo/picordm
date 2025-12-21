@@ -413,56 +413,30 @@ fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_json_editor(frame: &mut Frame, app: &mut App, area: Rect) {
-    match highlight_json_with_syntect(&app.json_editor.lines().join("\n")) {
-        Ok(highlighted_lines) => {
-            // Get cursor position from textarea
-            let (cursor_row, cursor_col) = app.json_editor.cursor();
+    // Get cursor position from textarea
+    let (cursor_row, cursor_col) = app.json_editor.cursor();
 
-            // Add cursor indicator to title
-            let title = format!(
-                "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit) - Ln {}, Col {}",
-                cursor_row + 1,
-                cursor_col + 1
-            );
+    // Add cursor indicator to title
+    let title = format!(
+        "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit) - Ln {}, Col {}",
+        cursor_row + 1,
+        cursor_col + 1
+    );
 
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
-                .title(Span::styled(
-                    title,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .style(Style::default().fg(Color::White));
-
-            let paragraph = Paragraph::new(highlighted_lines).block(block);
-
-            frame.render_widget(paragraph, area);
-
-            // Draw cursor - calculate cursor position in the rendered area
-            let x = area.x + 1 + (cursor_col as u16).min(area.width.saturating_sub(3));
-            let y = area.y + 1 + (cursor_row as u16).min(area.height.saturating_sub(3));
-
-            frame.set_cursor_position(ratatui::layout::Position { x, y });
-        }
-        Err(_) => {
-            app.json_editor.set_block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
-                    .title(Span::styled(
-                        "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit)",
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-            );
-            frame.render_widget(&app.json_editor, area);
-        }
-    }
+    app.json_editor.set_block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )),
+    );
+    
+    frame.render_widget(&app.json_editor, area);
 }
 
 fn highlight_json_with_syntect(
@@ -963,19 +937,19 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                         "Esc: Exit Search | Space: Toggle | Ctrl+a: Select/Clear All | Enter: Select | Arrow: Navigate"
                     }
                     _ if !app.current_value.is_empty() && app.is_json_content => {
-                        "e: Edit JSON | b: Back | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
+                        "e: Edit JSON | ↑↓: Scroll | Enter: View Key | /: Search | >: Command | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ if !app.selected_keys.is_empty() => {
-                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View | /: Search | >: Command | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View Value | /: Search | >: Command | Ctrl+b: Disconnect | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ => {
-                        "Space: Select | b: Back | Ctrl+a: Select All | Enter: View | /: Search | >: Command | Ctrl+d: Switch DB | Ctrl+r: Refresh | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Select | Enter: View Value | Ctrl+a: Select All | /: Search | >: Command | Ctrl+d: Switch DB | Ctrl+r: Refresh | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
                     }
                 }
             }
         }
         CurrentScreen::KeyContent => {
-            "b: Back to Keys | e: Edit JSON | ↑↓: Scroll | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
+            "b: Back | e: Edit JSON | ↑↓: Scroll | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
         }
         CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
         CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",

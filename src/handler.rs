@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, CurrentScreen};
 use crate::connection::FormField;
@@ -60,7 +60,7 @@ pub async fn handle_key_event(
 }
 
 async fn handle_json_editor(
-    terminal: &mut DefaultTerminal,
+    _terminal: &mut DefaultTerminal,
     app: &mut App<'_>,
     key: KeyEvent,
 ) -> Result<()> {
@@ -71,7 +71,6 @@ async fn handle_json_editor(
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.current_value = app.json_editor.lines().join("\n");
             app.cached_highlighted_json = None; // Clear cache after editing
-            terminal.draw(|f| ui::draw(f, app))?;
             app.save_current_value().await?;
             app.current_screen = CurrentScreen::KeyContent;
         }
@@ -85,7 +84,7 @@ async fn handle_json_editor(
 async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
-        KeyCode::Char('b') => {
+        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.is_searching_keys
                 || app.current_screen == CurrentScreen::CommandMode
                 || app.current_screen == CurrentScreen::NewConnectionForm
@@ -96,7 +95,19 @@ async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
 
             if app.current_screen == CurrentScreen::Dashboard {
                 app.disconnect_and_return_to_list().await;
-            } else if app.current_screen == CurrentScreen::KeyContent {
+            }
+            false
+        }
+        KeyCode::Char('b') => {
+            if app.is_searching_keys
+                || app.current_screen == CurrentScreen::CommandMode
+                || app.current_screen == CurrentScreen::NewConnectionForm
+                || app.current_screen == CurrentScreen::ConnectionSwitcher
+            {
+                return false;
+            }
+
+            if app.current_screen == CurrentScreen::KeyContent {
                 app.current_screen = CurrentScreen::Dashboard;
             }
             false
@@ -602,180 +613,6 @@ async fn handle_dashboard_normal(
         KeyCode::Char(_) => {}
         _ => {}
     }
-    Ok(())
-}
-
-pub async fn handle_mouse_event(
-    terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
-    mouse: MouseEvent,
-) -> Result<()> {
-    // Skip mouse events in form and editor screens
-    if app.current_screen == CurrentScreen::NewConnectionForm
-        || app.current_screen == CurrentScreen::JsonEditor
-    {
-        return Ok(());
-    }
-
-    match mouse.kind {
-        MouseEventKind::ScrollDown => {
-            handle_mouse_scroll_down(app);
-        }
-        MouseEventKind::ScrollUp => {
-            handle_mouse_scroll_up(app);
-        }
-        MouseEventKind::Down(_) => {
-            handle_mouse_click(terminal, app, mouse.column, mouse.row).await?;
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-fn handle_mouse_scroll_down(app: &mut App<'_>) {
-    match app.current_screen {
-        CurrentScreen::ConnectionList => {
-            app.next_connection();
-        }
-        CurrentScreen::Dashboard => {
-            if app.is_db_selector_open {
-                app.next_db();
-            } else {
-                app.next_key();
-            }
-        }
-        CurrentScreen::CommandMode => {
-            app.scroll_down();
-        }
-        CurrentScreen::KeyContent => {
-            app.scroll_down();
-        }
-        _ => {}
-    }
-}
-
-fn handle_mouse_scroll_up(app: &mut App<'_>) {
-    match app.current_screen {
-        CurrentScreen::ConnectionList => {
-            app.previous_connection();
-        }
-        CurrentScreen::Dashboard => {
-            if app.is_db_selector_open {
-                app.previous_db();
-            } else {
-                app.previous_key();
-            }
-        }
-        CurrentScreen::CommandMode => {
-            app.scroll_up();
-        }
-        CurrentScreen::KeyContent => {
-            app.scroll_up();
-        }
-        _ => {}
-    }
-}
-
-async fn handle_mouse_click(
-    terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
-    col: u16,
-    row: u16,
-) -> Result<()> {
-    let size = terminal.size()?;
-
-    // Calculate layout areas (matching ui.rs layout)
-    let header_height = 3;
-    let footer_height = 3;
-    let main_start = header_height;
-    let main_end = size.height.saturating_sub(footer_height);
-
-    // Check if click is in main area
-    if row < main_start || row >= main_end {
-        return Ok(());
-    }
-
-    let main_row = row - main_start;
-
-    match app.current_screen {
-        CurrentScreen::ConnectionList => {
-            handle_connection_list_click(app, main_row);
-        }
-        CurrentScreen::Dashboard | CurrentScreen::KeyContent => {
-            handle_dashboard_click(terminal, app, col, main_row, size.width).await?;
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-fn handle_connection_list_click(app: &mut App<'_>, row: u16) {
-    // Sidebar is 30% of width, click in that area
-    // List starts at row 1 (after border)
-    if row > 0 {
-        let list_row = (row - 1) as usize;
-        let connections_count = app.connection_list.connections().len();
-        if list_row < connections_count {
-            app.connection_list.state().select(Some(list_row));
-        }
-    }
-}
-
-async fn handle_dashboard_click(
-    terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
-    col: u16,
-    row: u16,
-    width: u16,
-) -> Result<()> {
-    let sidebar_width = (width * 30) / 100;
-
-    // Click in sidebar (keys list)
-    if col < sidebar_width {
-        handle_keys_list_click(terminal, app, row).await?;
-    }
-
-    Ok(())
-}
-
-async fn handle_keys_list_click(
-    terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
-    row: u16,
-) -> Result<()> {
-    // Search box is 3 lines, keys list starts after that
-    let search_box_height = 3;
-
-    if row > search_box_height {
-        // Approximate keys list area
-        let list_row = (row - search_box_height - 1) as usize; // -1 for border
-        let filtered_keys = app.get_filtered_keys();
-
-        if list_row < filtered_keys.len() {
-            // Get the selected key from filtered list
-            let selected_key = &filtered_keys[list_row];
-
-            // Find the original index in the full keys list
-            if let Some(original_idx) = app.keys.iter().position(|k| k == selected_key) {
-                // Update selection to original index
-                app.key_list_state.select(Some(original_idx));
-
-                // Exit command mode if active
-                if app.current_screen == CurrentScreen::CommandMode {
-                    app.toggle_command_mode();
-                }
-
-                // Load value and switch to KeyContent screen
-                app.is_loading_value = true;
-                terminal.draw(|f| ui::draw(f, app))?;
-                app.fetch_value(true).await?;
-                app.is_loading_value = false;
-            }
-        }
-    }
-
     Ok(())
 }
 
