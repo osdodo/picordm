@@ -4,8 +4,6 @@ version = "0.4.0"
 authors = ["osdodo <dodomatrix@pm.me>"]
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 ratatui = "0.29.0"
 redis = { version = "0.32.7", features = ["tokio-comp", "aio", "json", "tokio-native-tls-comp", "cluster", "cluster-async"] }

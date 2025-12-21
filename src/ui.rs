@@ -121,14 +121,6 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::raw("  |  "),
                 Span::styled("Memory: ", Style::default().fg(Color::Gray)),
                 Span::styled(memory, Style::default().fg(Color::Green)),
-                Span::raw("  |  "),
-                Span::styled(
-                    "[F5]",
-                    Style::default()
-                        .fg(Color::Gray)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" Refresh", Style::default().fg(Color::Gray)),
             ]);
         } else {
             header_spans.extend(vec![
@@ -139,16 +131,6 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw("  |  "),
-                Span::styled("Loading server info...", Style::default().fg(Color::Gray)),
-                Span::raw("  "),
-                Span::styled(
-                    "[F5]",
-                    Style::default()
-                        .fg(Color::Gray)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" Refresh", Style::default().fg(Color::Gray)),
             ]);
         }
     } else {
@@ -162,7 +144,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.is_loading_server_info {
         header_spans.extend(vec![
             Span::raw("  |  "),
-            Span::styled("Loading...", Style::default().fg(Color::Yellow)),
+            Span::styled("Loading server info...", Style::default().fg(Color::Yellow)),
         ]);
     }
 
@@ -526,13 +508,21 @@ fn render_cli_ui(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
     let title = if app.current_screen == CurrentScreen::CommandMode {
-        "Command Input (Enter: Execute | Esc: Exit)"
+        if app.command_mode_focus_on_output {
+            "Command Input (Tab: Switch to Input | Esc: Exit)"
+        } else {
+            "Command Input (Enter: Execute | Tab: Browse Output | Esc: Exit)"
+        }
     } else {
         "Command Input (Press '>' to enter command mode)"
     };
 
     let border_color = if app.current_screen == CurrentScreen::CommandMode {
-        Color::Rgb(147, 112, 219)
+        if app.command_mode_focus_on_output {
+            Color::Rgb(80, 90, 110) // Dimmed when not focused
+        } else {
+            Color::Rgb(147, 112, 219) // Highlighted when focused
+        }
     } else {
         Color::Rgb(80, 90, 110)
     };
@@ -560,8 +550,8 @@ fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(input_widget, area);
 
-    // Set cursor position if in command mode
-    if app.current_screen == CurrentScreen::CommandMode {
+    // Set cursor position if in command mode and focus is on input
+    if app.current_screen == CurrentScreen::CommandMode && !app.command_mode_focus_on_output {
         let cursor_x = area.x + 3 + app.command_input.width() as u16; // "> " + input
         let cursor_y = area.y + 1;
 
@@ -575,16 +565,31 @@ fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
+    use edtui::EditorMode;
+    
     let title = if app.command_output.is_empty() {
         "Command Output"
+    } else if app.command_mode_focus_on_output {
+        match app.editor_state.mode {
+            EditorMode::Visual => "Command Output (Visual Mode - Esc to exit Visual, then Esc to exit Command Mode)",
+            EditorMode::Insert => "Command Output (Insert Mode - Esc to exit Insert, then Esc to exit Command Mode)",
+            EditorMode::Normal => "Command Output (Browsing - hjkl/arrows to navigate, Tab to return)",
+            EditorMode::Search => "Command Output (Search Mode - Esc to exit Search)",
+        }
     } else {
-        "Command Output"
+        "Command Output (Tab to browse)"
+    };
+
+    let border_color = if app.command_mode_focus_on_output {
+        Color::Rgb(147, 112, 219) // Highlighted when focused
+    } else {
+        Color::Rgb(80, 90, 110) // Normal when not focused
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+        .border_style(Style::default().fg(border_color))
         .title(Span::styled(
             title,
             Style::default()
@@ -809,7 +814,7 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                         "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View Value | /: Search | >: Command | Ctrl+b: Disconnect | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ => {
-                        "Space: Select | Enter: View Value | Ctrl+a: Select All | /: Search | >: Command | Ctrl+n: Switch DB | F5: Refresh | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Select | Enter: View Value | Ctrl+a: Select All | /: Search | >: Command | Ctrl+n: Switch DB | F5: Refresh Server Stats | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
                     }
                 }
             }
@@ -817,7 +822,19 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
         CurrentScreen::KeyContent => {
             "Vim: :w(Save) :q(Quit) :wq(Save&Quit) | i(Insert) v(Visual) hjkl(Navigate) | Ctrl+q: Exit App"
         }
-        CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",
+        CurrentScreen::CommandMode => {
+            use edtui::EditorMode;
+            if app.command_mode_focus_on_output {
+                match app.editor_state.mode {
+                    EditorMode::Visual => "y: Copy | d: Delete | Esc: Exit Visual Mode",
+                    EditorMode::Insert => "Type to edit | Esc: Exit Insert Mode",
+                    EditorMode::Normal => "hjkl/Arrows: Navigate | v: Visual | i: Insert | Tab: Back to Input | Esc: Exit Command Mode",
+                    EditorMode::Search => "Type to search | Esc: Exit Search Mode",
+                }
+            } else {
+                "Enter: Execute | Tab: Browse Output | Esc: Exit Command Mode"
+            }
+        }
         CurrentScreen::FileSelector => "↑↓: Navigate | Enter: Import | Esc: Cancel",
         CurrentScreen::ConnectionSwitcher => {
             "↑↓: Navigate | Type: Search | 1-9: Quick Select | Enter: Switch | Esc: Cancel"

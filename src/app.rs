@@ -75,6 +75,7 @@ pub struct App {
     // Command input
     pub command_input: String,
     pub command_output: String, // Current command output
+    pub command_mode_focus_on_output: bool, // true = browsing output, false = typing command
 
     // pending execution
     pub pending_connection: bool,
@@ -143,6 +144,7 @@ impl App {
             error_message: None,
             command_input: String::new(),
             command_output: String::new(),
+            command_mode_focus_on_output: false,
             last_operation_message: None,
             progress_dialog: None,
             file_selector: FileSelector::new(),
@@ -903,12 +905,14 @@ impl App {
             // Clear all CLI state when exiting command mode
             self.command_input.clear();
             self.command_output.clear();
+            self.command_mode_focus_on_output = false;
             self.current_value.clear();
             self.is_json_content = false;
             self.editor_state = EditorState::default();
         } else {
             // Enter command mode
             self.current_screen = CurrentScreen::CommandMode;
+            self.command_mode_focus_on_output = false;
         }
     }
 

@@ -323,7 +323,31 @@ async fn handle_command_mode(
 ) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
-            app.toggle_command_mode();
+            // Only exit command mode if editor is in Normal mode
+            // This allows Esc to exit Visual/Insert mode first
+            if app.command_mode_focus_on_output {
+                use edtui::EditorMode;
+                match app.editor_state.mode {
+                    EditorMode::Normal => {
+                        // In Normal mode, Esc exits command mode
+                        app.toggle_command_mode();
+                    }
+                    _ => {
+                        // In other modes (Visual/Insert), pass Esc to edtui to exit those modes first
+                        app.editor_event_handler
+                            .on_key_event(key, &mut app.editor_state);
+                    }
+                }
+            } else {
+                // When focus is on input, Esc always exits command mode
+                app.toggle_command_mode();
+            }
+        }
+        KeyCode::Tab => {
+            // Toggle focus between command input and output browsing
+            if !app.command_output.is_empty() {
+                app.command_mode_focus_on_output = !app.command_mode_focus_on_output;
+            }
         }
         KeyCode::Down
         | KeyCode::Up
@@ -334,27 +358,41 @@ async fn handle_command_mode(
         | KeyCode::Home
         | KeyCode::End => {
             // Pass navigation keys to edtui for scrolling in output
-            if !app.command_output.is_empty() {
+            if !app.command_output.is_empty() && app.command_mode_focus_on_output {
                 app.editor_event_handler
                     .on_key_event(key, &mut app.editor_state);
             }
         }
         KeyCode::Char(c) => {
-            // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
-            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT)
-                && !key.modifiers.contains(KeyModifiers::SUPER)
-            {
-                app.command_input.push(c);
+            // Only handle character input when focus is on command input
+            if !app.command_mode_focus_on_output {
+                // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && !key.modifiers.contains(KeyModifiers::SUPER)
+                {
+                    app.command_input.push(c);
+                }
+            } else {
+                // When browsing output, pass keys to edtui (for vim-like navigation)
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
             }
         }
         KeyCode::Backspace => {
-            app.command_input.pop();
+            // Only handle backspace when focus is on command input
+            if !app.command_mode_focus_on_output {
+                app.command_input.pop();
+            }
         }
         KeyCode::Enter => {
-            terminal.draw(|f| ui::draw(f, app))?;
-            app.execute_command().await?;
-            // Stay in command mode, allowing continuous command input.
+            // Only execute command when focus is on command input
+            if !app.command_mode_focus_on_output {
+                terminal.draw(|f| ui::draw(f, app))?;
+                app.execute_command().await?;
+                // After executing command, keep focus on input for next command
+                // Stay in command mode, allowing continuous command input.
+            }
         }
         _ => {}
     }
@@ -574,12 +612,7 @@ async fn handle_dashboard_normal(
                     .on_key_event(key, &mut app.editor_state);
             }
         }
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Save in KeyContent mode (override edtui) - kept for compatibility
-            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
-                app.save_current_value().await?;
-            }
-        }
+
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Redo in KeyContent mode (pass to edtui)
             if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
