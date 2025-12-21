@@ -3,19 +3,22 @@
 ## Quick Start
 
 ### Import Data
+
 1. Press `Ctrl+L` to open file browser
 2. Select a JSON file and press Enter
 3. Wait for import to complete
 
 ### Export Data
+
 1. Press `Ctrl+E` to export data
 2. File is automatically saved to desktop
 
-**Note**: You can also select specific keys first, then export only the selected keys instead of all data.
+You can also select specific keys first, then export only the selected keys instead of all data.
 
 ## Data Format
 
 ### Basic Format
+
 ```json
 {
   "database": 0,
@@ -30,12 +33,14 @@
 ```
 
 ### Fields Description
+
 - `database` (optional): Target database number (0-15). If not specified, imports to currently selected database
 - `keys`: Object containing all Redis keys to import
 
 ### Data Type Examples
 
 **String**
+
 ```json
 "user:1": {
   "key_type": "string",
@@ -45,6 +50,7 @@
 ```
 
 **List**
+
 ```json
 "my_list": {
   "key_type": "list",
@@ -54,6 +60,7 @@
 ```
 
 **Hash**
+
 ```json
 "user_profile": {
   "key_type": "hash",
@@ -66,15 +73,17 @@
 ```
 
 **Set**
+
 ```json
 "my_set": {
-  "key_type": "set", 
+  "key_type": "set",
   "value": ["member1", "member2"],
   "ttl": null
 }
 ```
 
 **Sorted Set**
+
 ```json
 "leaderboard": {
   "key_type": "zset",
@@ -87,10 +96,12 @@
 ```
 
 ## TTL Settings
+
 - `"ttl": null` - Never expires
 - `"ttl": 3600` - Expires after 3600 seconds
 
 ## Notes
+
 - Import will not overwrite existing keys
 - Only JSON format files are supported
 - If `database` field is specified, data will be imported to that database

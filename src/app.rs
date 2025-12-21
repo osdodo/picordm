@@ -214,43 +214,68 @@ impl<'a> App<'a> {
 
     pub async fn connect_to_selected(&mut self) -> Result<()> {
         if let Some(conn) = self.connection_list.selected_connection() {
-            let mut url_str = if conn.use_tls {
-                "rediss://".to_string()
-            } else {
-                "redis://".to_string()
-            };
+            let result = if conn.is_cluster {
+                let mut nodes = Vec::new();
+                for node in &conn.cluster_nodes {
+                    let mut url = if conn.use_tls {
+                        "rediss://".to_string()
+                    } else {
+                        "redis://".to_string()
+                    };
 
-            if let Some(pass) = &conn.password {
-                if !pass.is_empty() {
-                    if let Some(user) = &conn.username {
-                        if !user.is_empty() {
-                            url_str.push_str(user);
+                    if let Some(pass) = &conn.password {
+                        if !pass.is_empty() {
+                            if let Some(user) = &conn.username {
+                                if !user.is_empty() {
+                                    url.push_str(user);
+                                }
+                            }
+                            url.push(':');
+                            url.push_str(pass);
+                            url.push('@');
                         }
                     }
-                    url_str.push(':');
-                    url_str.push_str(pass);
-                    url_str.push('@');
+
+                    url.push_str(node);
+                    nodes.push(url);
                 }
-            }
+                self.redis.connect_cluster(nodes).await
+            } else {
+                let mut url_str = if conn.use_tls {
+                    "rediss://".to_string()
+                } else {
+                    "redis://".to_string()
+                };
 
-            url_str.push_str(&conn.host);
-            url_str.push(':');
-            url_str.push_str(&conn.port.to_string());
+                if let Some(pass) = &conn.password {
+                    if !pass.is_empty() {
+                        if let Some(user) = &conn.username {
+                            if !user.is_empty() {
+                                url_str.push_str(user);
+                            }
+                        }
+                        url_str.push(':');
+                        url_str.push_str(pass);
+                        url_str.push('@');
+                    }
+                }
 
-            match self.redis.connect(&url_str).await {
+                url_str.push_str(&conn.host);
+                url_str.push(':');
+                url_str.push_str(&conn.port.to_string());
+
+                self.redis.connect(&url_str).await
+            };
+
+            match result {
                 Ok(_) => {
-                    self.current_db_index = 0; // Reset to db0 on new connection
-
-                    // Switch to Dashboard after successful connection
+                    self.current_db_index = 0;
                     self.current_screen = CurrentScreen::Dashboard;
                     self.current_connection_name = Some(conn.name.clone());
-
-                    // Need to load dashboard data - set loading indicators
                     self.pending_dashboard_data = true;
                 }
                 Err(e) => {
                     self.error_message = Some(format!("Connection failed: {}", e));
-                    // Go back to connection list on error
                     self.current_screen = CurrentScreen::ConnectionList;
                     self.current_connection_name = None;
                 }
@@ -572,12 +597,35 @@ impl<'a> App<'a> {
 
         // Generate name if empty
         if form.name.is_empty() {
-            let host_exists = self.connection_list.find_by_name(&form.host);
-            form.name = if host_exists {
-                format!("{}-{}", form.host, chrono::Local::now().format("%H%M%S"))
+            if form.is_cluster {
+                let first_node = form.cluster_nodes
+                    .split(',')
+                    .next()
+                    .unwrap_or("cluster")
+                    .trim()
+                    .to_string();
+                
+                // Extract host from first node (remove port)
+                let base_name = if let Some(idx) = first_node.find(':') {
+                    &first_node[..idx]
+                } else {
+                    &first_node
+                };
+                
+                let name_exists = self.connection_list.find_by_name(base_name);
+                form.name = if name_exists {
+                    format!("{}-cluster-{}", base_name, chrono::Local::now().format("%H%M%S"))
+                } else {
+                    format!("{}-cluster", base_name)
+                };
             } else {
-                form.host.clone()
-            };
+                let host_exists = self.connection_list.find_by_name(&form.host);
+                form.name = if host_exists {
+                    format!("{}-{}", form.host, chrono::Local::now().format("%H%M%S"))
+                } else {
+                    form.host.clone()
+                };
+            }
         }
 
         // Parse db_aliases

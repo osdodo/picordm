@@ -121,13 +121,19 @@ fn handle_connection_form(app: &mut App<'_>, key: KeyEvent) -> Result<()> {
             app.error_message = None;
         }
         KeyCode::Tab => {
+            app.connection_form.is_cluster = !app.connection_form.is_cluster;
+        }
+        KeyCode::Down => {
             app.next_form_field();
         }
-        KeyCode::BackTab => {
+        KeyCode::Up => {
             app.previous_form_field();
         }
         KeyCode::Enter => {
             handle_form_enter(app)?;
+        }
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.save_connection_form()?;
         }
         KeyCode::Char(c) => {
             // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
@@ -154,10 +160,8 @@ fn handle_form_enter(app: &mut App<'_>) -> Result<()> {
         FormField::AllowInsecureTls => {
             app.connection_form.allow_insecure_tls = !app.connection_form.allow_insecure_tls;
         }
-        FormField::Submit => {
-            app.save_connection_form()?;
-        }
         _ => {
+            // For other fields, Enter moves to next field
             app.next_form_field();
         }
     }
@@ -184,18 +188,20 @@ fn handle_form_char_input(app: &mut App<'_>, c: char) {
             }
         }
         FormField::Sni => app.connection_form.sni.push(c),
+        FormField::ClusterNodes => app.connection_form.cluster_nodes.push(c),
         FormField::DbAliases => app.connection_form.db_aliases.push(c),
         FormField::UseTls | FormField::AllowInsecureTls => {
             if c == ' ' {
-                if app.connection_form.editing_field == FormField::UseTls {
-                    app.connection_form.use_tls = !app.connection_form.use_tls;
-                } else {
-                    app.connection_form.allow_insecure_tls =
-                        !app.connection_form.allow_insecure_tls;
+                match app.connection_form.editing_field {
+                    FormField::UseTls => app.connection_form.use_tls = !app.connection_form.use_tls,
+                    FormField::AllowInsecureTls => {
+                        app.connection_form.allow_insecure_tls =
+                            !app.connection_form.allow_insecure_tls
+                    }
+                    _ => {}
                 }
             }
         }
-        _ => {}
     }
 }
 
@@ -223,10 +229,15 @@ fn handle_form_backspace(app: &mut App<'_>) {
         FormField::Sni => {
             app.connection_form.sni.pop();
         }
+        FormField::ClusterNodes => {
+            app.connection_form.cluster_nodes.pop();
+        }
         FormField::DbAliases => {
             app.connection_form.db_aliases.pop();
         }
-        _ => {}
+        FormField::UseTls | FormField::AllowInsecureTls => {
+            // Checkboxes don't need backspace handling
+        }
     }
 }
 

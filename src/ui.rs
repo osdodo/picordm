@@ -51,13 +51,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Overlays
     if app.current_screen == CurrentScreen::NewConnectionForm {
-        // Calculate form height: top(1) + name(3) + host_port(3) + spacer(1) +
+        // Calculate form height: tab(2) + name(3) + host_port(3) + spacer(1) +
         // username_password(3) + spacer(1) + tls(3) + sni(3) + db_aliases(3) +
-        // spacer(1) + submit(3) + bottom(1) + margin(2*2) = 30 or 33
+        // bottom(1) + margin(2*2) = 27 or 30
         let form_height = if app.connection_form.validation_error.is_some() {
-            33
+            30 // With error message (3 lines)
         } else {
-            30
+            27 // Without error message
         };
         let popup_area = centered_rect_fixed_height(60, form_height, size);
         frame.render_widget(Clear, popup_area);
@@ -260,7 +260,9 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
 
     // Sidebar
-    if app.current_screen == CurrentScreen::ConnectionList {
+    if app.current_screen == CurrentScreen::ConnectionList
+        || app.current_screen == CurrentScreen::NewConnectionForm
+    {
         render_connection_list(frame, app, chunks[0]);
         render_connection_content(frame, app, chunks[1]);
     } else if app.current_screen == CurrentScreen::FileSelector {
@@ -285,10 +287,7 @@ fn render_connection_content(frame: &mut Frame, app: &App, area: Rect) {
 
     // Display error message if present, otherwise show default prompt
     let content = if let Some(err) = &app.error_message {
-        Span::styled(
-            format!("Error: {}", err),
-            Style::default().fg(Color::Red),
-        )
+        Span::styled(format!("Error: {}", err), Style::default().fg(Color::Red))
     } else {
         Span::styled(
             "Select a connection to start",
@@ -948,7 +947,9 @@ fn render_db_selector(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let status_text = match app.current_screen {
-        CurrentScreen::NewConnectionForm => "Esc: Cancel | Tab: Next | Enter: Toggle/Save",
+        CurrentScreen::NewConnectionForm => {
+            "Esc: Cancel | ↑↓: Navigate | Tab: Switch Mode | Enter: Toggle | Ctrl+S: Save"
+        }
         CurrentScreen::ConnectionList => {
             "n: New connection | e: Edit connection | i: Import connection | Delete/Backspace: Delete connection | ↑↓: Nav | Enter: Connect | Ctrl+q: Quit"
         }
@@ -1018,11 +1019,55 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
     // Track cursor position for active field
     let mut cursor_pos: Option<(u16, u16)> = None;
 
+    // Render mode tabs at the top
+    let inner_area = area.inner(ratatui::layout::Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+
+    let tab_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y,
+        width: inner_area.width,
+        height: 1,
+    };
+
+    let standalone_style = if !app.connection_form.is_cluster {
+        Style::default()
+            .fg(Color::Rgb(147, 112, 219))
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let cluster_style = if app.connection_form.is_cluster {
+        Style::default()
+            .fg(Color::Rgb(147, 112, 219))
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let tabs = Line::from(vec![
+        Span::styled("[ Standalone ]", standalone_style),
+        Span::raw("  "),
+        Span::styled("[ Cluster ]", cluster_style),
+        Span::raw("  "),
+        Span::styled(
+            "(Press Tab to switch)",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+    ]);
+
+    frame.render_widget(Paragraph::new(tabs), tab_area);
+
     let constraints = if app.connection_form.validation_error.is_some() {
         vec![
-            Constraint::Length(1), // Top spacing
+            Constraint::Length(2), // Tab bar + spacing
             Constraint::Length(3), // Name *
-            Constraint::Length(3), // Host & Port (horizontal)
+            Constraint::Length(3), // Host & Port (horizontal) OR Cluster Nodes
             Constraint::Length(1), // Spacer
             Constraint::Length(3), // Username & Password (horizontal)
             Constraint::Length(1), // Spacer
@@ -1031,22 +1076,19 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(3), // DB Aliases
             Constraint::Length(1), // Spacer
             Constraint::Length(3), // Error message
-            Constraint::Length(3), // Submit button
             Constraint::Length(1), // Bottom spacing
         ]
     } else {
         vec![
-            Constraint::Length(1), // Top spacing
+            Constraint::Length(2), // Tab bar + spacing
             Constraint::Length(3), // Name *
-            Constraint::Length(3), // Host & Port (horizontal)
+            Constraint::Length(3), // Host & Port (horizontal) OR Cluster Nodes
             Constraint::Length(1), // Spacer
             Constraint::Length(3), // Username & Password (horizontal)
             Constraint::Length(1), // Spacer
             Constraint::Length(3), // Use TLS & Allow Insecure TLS (horizontal)
             Constraint::Length(3), // SNI
             Constraint::Length(3), // DB Aliases
-            Constraint::Length(1), // Spacer
-            Constraint::Length(3), // Submit button
             Constraint::Length(1), // Bottom spacing
         ]
     };
@@ -1057,7 +1099,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints(constraints)
         .split(area);
 
-    let mut chunk_idx = 1; // Skip first spacing chunk
+    let mut chunk_idx = 1; // Skip tab bar chunk
 
     let active_border_color = Color::Rgb(147, 112, 219); // Medium Purple
     let inactive_border_color = Color::Rgb(80, 90, 110);
@@ -1127,11 +1169,12 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
         chunk_idx += 1;
     }
 
-    // Host & Port (required) - horizontal layout
-    {
+    // Host & Port (Standalone) OR Cluster Nodes (Cluster) - conditional rendering
+    if !app.connection_form.is_cluster {
+        // Standalone mode: Host & Port (horizontal layout)
         let host_port_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(chunks[chunk_idx]);
 
         // Render Host
@@ -1174,7 +1217,6 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
             );
         frame.render_widget(widget, host_port_chunks[0]);
 
-        // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
                 host_port_chunks[0].x + 1 + value.width() as u16,
@@ -1222,7 +1264,6 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
             );
         frame.render_widget(widget, host_port_chunks[1]);
 
-        // Set cursor position if this field is active
         if is_active {
             cursor_pos = Some((
                 host_port_chunks[1].x + 1 + value.width() as u16,
@@ -1230,8 +1271,70 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
 
-        chunk_idx += 2; // Skip spacer
+        chunk_idx += 1;
+    } else {
+        // Cluster mode: Cluster Nodes
+        let is_active = app.connection_form.editing_field == FormField::ClusterNodes;
+        let border_color = if is_active {
+            active_border_color
+        } else {
+            inactive_border_color
+        };
+        let title_color = if is_active {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::White
+        };
+        let value = &app.connection_form.cluster_nodes;
+
+        let title_span = Line::from(vec![
+            Span::styled(
+                "Cluster Nodes",
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " * (e.g. host1:6379, host2:6379, host3:6379)",
+                Style::default().fg(title_color),
+            ),
+        ]);
+
+        let display_value = if value.is_empty() && !is_active {
+            "..."
+        } else {
+            value.as_str()
+        };
+
+        let widget = Paragraph::new(display_value)
+            .style(if value.is_empty() && !is_active {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(Color::White)
+            })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
+                    .title(title_span),
+            );
+        frame.render_widget(widget, chunks[chunk_idx]);
+
+        if is_active {
+            cursor_pos = Some((
+                chunks[chunk_idx].x + 1 + value.width() as u16,
+                chunks[chunk_idx].y + 1,
+            ));
+        }
+
+        chunk_idx += 1;
     }
+
+    // Spacer
+    chunk_idx += 1;
 
     // Username & Password (optional) - horizontal layout
     {
@@ -1570,54 +1673,7 @@ fn render_new_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
                 .style(Style::default().bg(Color::Rgb(50, 20, 20))),
         );
         frame.render_widget(error_text, chunks[chunk_idx]);
-        chunk_idx += 1;
     }
-
-    // Submit button
-    let button_area = {
-        let button_width = 12; // Width of the button (smaller for "Save")
-        let parent_width = chunks[chunk_idx].width;
-        let x_offset = if parent_width > button_width {
-            (parent_width - button_width) / 2
-        } else {
-            0
-        };
-
-        Rect {
-            x: chunks[chunk_idx].x + x_offset,
-            y: chunks[chunk_idx].y,
-            width: button_width.min(parent_width),
-            height: chunks[chunk_idx].height,
-        }
-    };
-
-    let is_submit_focused = app.connection_form.editing_field == FormField::Submit;
-    let (submit_fg, submit_border) = if is_submit_focused {
-        (Color::Rgb(147, 112, 219), Color::Rgb(147, 112, 219))
-    } else {
-        (Color::DarkGray, Color::Rgb(80, 90, 110))
-    };
-
-    let submit_content = Line::from(vec![Span::styled(
-        "Save",
-        Style::default()
-            .fg(submit_fg)
-            .add_modifier(if is_submit_focused {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            }),
-    )]);
-
-    let submit_btn = Paragraph::new(submit_content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(submit_border)),
-        )
-        .alignment(ratatui::layout::Alignment::Center);
-    frame.render_widget(submit_btn, button_area);
 
     // Render cursor for active text input field
     if let Some((x, y)) = cursor_pos {
