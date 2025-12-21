@@ -117,21 +117,21 @@ impl ConnectionList {
     }
 
     pub fn delete_selected(&mut self) -> Option<ConnectionConfig> {
-        if let Some(selected_idx) = self.state.selected() {
-            if selected_idx < self.connections.len() {
-                let removed = self.connections.remove(selected_idx);
-                if self.connections.is_empty() {
-                    self.state.select(None);
+        if let Some(selected_idx) = self.state.selected()
+            && selected_idx < self.connections.len()
+        {
+            let removed = self.connections.remove(selected_idx);
+            if self.connections.is_empty() {
+                self.state.select(None);
+            } else {
+                let new_idx = if selected_idx > 0 {
+                    selected_idx - 1
                 } else {
-                    let new_idx = if selected_idx > 0 {
-                        selected_idx - 1
-                    } else {
-                        0
-                    };
-                    self.state.select(Some(new_idx));
-                }
-                return Some(removed);
+                    0
+                };
+                self.state.select(Some(new_idx));
             }
+            return Some(removed);
         }
         None
     }
@@ -269,11 +269,9 @@ impl ConnectionForm {
                 self.validation_error = Some("Port must be a valid number (1-65535)".to_string());
                 return false;
             }
-        } else {
-            if self.cluster_nodes.trim().is_empty() {
-                self.validation_error = Some("Cluster nodes cannot be empty".to_string());
-                return false;
-            }
+        } else if self.cluster_nodes.trim().is_empty() {
+            self.validation_error = Some("Cluster nodes cannot be empty".to_string());
+            return false;
         }
 
         true
@@ -360,13 +358,13 @@ impl ConnectionForm {
             if form.cluster_nodes.trim().is_empty() {
                 return Err("Failed to parse cluster connection: no nodes found".to_string());
             }
-            
+
             let nodes: Vec<&str> = form.cluster_nodes.split(',').collect();
-            
+
             // Note: For cluster mode, we accept 1 or more nodes
             // - Single node: Entry point to discover other nodes (e.g., redis-cli -c -h host -p port)
             // - Multiple nodes: Explicit node list for better reliability
-            
+
             for node in &nodes {
                 let node = node.trim();
                 if !node.contains(':') {
@@ -519,10 +517,10 @@ impl ConnectionForm {
                 form.host = h;
             }
         }
-        if let Some(p) = override_port {
-            if !is_cluster_mode {
-                form.port = p;
-            }
+        if let Some(p) = override_port
+            && !is_cluster_mode
+        {
+            form.port = p;
         }
         if let Some(u) = override_user {
             form.username = Some(u);

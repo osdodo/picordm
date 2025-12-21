@@ -74,7 +74,7 @@ pub struct App {
 
     // Command input
     pub command_input: String,
-    pub command_output: String, // Current command output
+    pub command_output: String,             // Current command output
     pub command_mode_focus_on_output: bool, // true = browsing output, false = typing command
 
     // pending execution
@@ -183,13 +183,10 @@ impl App {
 
             // Handle events
             if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
-                    Event::Key(key) => {
-                        if handle_key_event(terminal, &mut self, key).await? {
-                            return Ok(());
-                        }
-                    }
-                    _ => {}
+                if let Event::Key(key) = event::read()?
+                    && handle_key_event(terminal, &mut self, key).await?
+                {
+                    return Ok(());
                 }
             } else {
                 // Auto-hide progress dialog after 3 seconds
@@ -221,17 +218,17 @@ impl App {
                         "redis://".to_string()
                     };
 
-                    if let Some(pass) = &conn.password {
-                        if !pass.is_empty() {
-                            if let Some(user) = &conn.username {
-                                if !user.is_empty() {
-                                    url.push_str(user);
-                                }
-                            }
-                            url.push(':');
-                            url.push_str(pass);
-                            url.push('@');
+                    if let Some(pass) = &conn.password
+                        && !pass.is_empty()
+                    {
+                        if let Some(user) = &conn.username
+                            && !user.is_empty()
+                        {
+                            url.push_str(user);
                         }
+                        url.push(':');
+                        url.push_str(pass);
+                        url.push('@');
                     }
 
                     url.push_str(node);
@@ -245,17 +242,17 @@ impl App {
                     "redis://".to_string()
                 };
 
-                if let Some(pass) = &conn.password {
-                    if !pass.is_empty() {
-                        if let Some(user) = &conn.username {
-                            if !user.is_empty() {
-                                url_str.push_str(user);
-                            }
-                        }
-                        url_str.push(':');
-                        url_str.push_str(pass);
-                        url_str.push('@');
+                if let Some(pass) = &conn.password
+                    && !pass.is_empty()
+                {
+                    if let Some(user) = &conn.username
+                        && !user.is_empty()
+                    {
+                        url_str.push_str(user);
                     }
+                    url_str.push(':');
+                    url_str.push_str(pass);
+                    url_str.push('@');
                 }
 
                 url_str.push_str(&conn.host);
@@ -312,9 +309,7 @@ impl App {
         match self.redis.get_value(key, self.current_db_index).await {
             Ok(val) => {
                 // Quick check: JSON must start with {, [, or " and be non-empty
-                let looks_like_json = val
-                    .trim_start()
-                    .starts_with(|c| c == '{' || c == '[' || c == '"');
+                let looks_like_json = val.trim_start().starts_with(['{', '[', '"']);
 
                 // Try formatting JSON only if it looks like JSON
                 let (content, is_json) = if looks_like_json {
@@ -1194,39 +1189,39 @@ impl App {
     }
 
     pub async fn switch_to_selected_connection(&mut self) -> Result<()> {
-        if let Some(selected_idx) = self.connection_switcher_state.selected() {
-            if let Some(conn) = self.connection_list.connections().get(selected_idx) {
-                // Don't switch if it's the same connection
-                if let Some(current_name) = &self.current_connection_name {
-                    if &conn.name == current_name {
-                        self.hide_connection_switcher();
-                        return Ok(());
-                    }
-                }
-
-                // Disconnect from current connection first
-                self.redis.disconnect().await;
-
-                // Clear current state
-                self.current_connection_name = None;
-                self.keys.clear();
-                self.current_value.clear();
-                self.is_json_content = false;
-                self.editor_state = EditorState::default();
-                self.server_info = None;
-                self.db_list.clear();
-                self.current_db_index = 0;
-                self.selected_keys.clear();
-                self.key_search_filter.clear();
-                self.is_searching_keys = false;
-
-                // Update connection list selection to match switcher
-                self.connection_list.state().select(Some(selected_idx));
-
-                // Hide switcher and start connection process
+        if let Some(selected_idx) = self.connection_switcher_state.selected()
+            && let Some(conn) = self.connection_list.connections().get(selected_idx)
+        {
+            // Don't switch if it's the same connection
+            if let Some(current_name) = &self.current_connection_name
+                && &conn.name == current_name
+            {
                 self.hide_connection_switcher();
-                self.start_connection();
+                return Ok(());
             }
+
+            // Disconnect from current connection first
+            self.redis.disconnect().await;
+
+            // Clear current state
+            self.current_connection_name = None;
+            self.keys.clear();
+            self.current_value.clear();
+            self.is_json_content = false;
+            self.editor_state = EditorState::default();
+            self.server_info = None;
+            self.db_list.clear();
+            self.current_db_index = 0;
+            self.selected_keys.clear();
+            self.key_search_filter.clear();
+            self.is_searching_keys = false;
+
+            // Update connection list selection to match switcher
+            self.connection_list.state().select(Some(selected_idx));
+
+            // Hide switcher and start connection process
+            self.hide_connection_switcher();
+            self.start_connection();
         }
         Ok(())
     }

@@ -179,10 +179,10 @@ pub async fn import_redis_data(
                 imported_count += 1;
 
                 // Set TTL if specified
-                if let Some(ttl) = key_data.ttl {
-                    if ttl > 0 {
-                        let _ = redis.set_key_ttl(&key, ttl, target_database).await;
-                    }
+                if let Some(ttl) = key_data.ttl
+                    && ttl > 0
+                {
+                    let _ = redis.set_key_ttl(&key, ttl, target_database).await;
                 }
             }
             Err(e) => {

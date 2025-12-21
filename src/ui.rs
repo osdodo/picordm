@@ -566,14 +566,20 @@ fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
     use edtui::EditorMode;
-    
+
     let title = if app.command_output.is_empty() {
         "Command Output"
     } else if app.command_mode_focus_on_output {
         match app.editor_state.mode {
-            EditorMode::Visual => "Command Output (Visual Mode - Esc to exit Visual, then Esc to exit Command Mode)",
-            EditorMode::Insert => "Command Output (Insert Mode - Esc to exit Insert, then Esc to exit Command Mode)",
-            EditorMode::Normal => "Command Output (Browsing - hjkl/arrows to navigate, Tab to return)",
+            EditorMode::Visual => {
+                "Command Output (Visual Mode - Esc to exit Visual, then Esc to exit Command Mode)"
+            }
+            EditorMode::Insert => {
+                "Command Output (Insert Mode - Esc to exit Insert, then Esc to exit Command Mode)"
+            }
+            EditorMode::Normal => {
+                "Command Output (Browsing - hjkl/arrows to navigate, Tab to return)"
+            }
             EditorMode::Search => "Command Output (Search Mode - Esc to exit Search)",
         }
     } else {
@@ -828,7 +834,9 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                 match app.editor_state.mode {
                     EditorMode::Visual => "y: Copy | d: Delete | Esc: Exit Visual Mode",
                     EditorMode::Insert => "Type to edit | Esc: Exit Insert Mode",
-                    EditorMode::Normal => "hjkl/Arrows: Navigate | v: Visual | i: Insert | Tab: Back to Input | Esc: Exit Command Mode",
+                    EditorMode::Normal => {
+                        "hjkl/Arrows: Navigate | v: Visual | i: Insert | Tab: Back to Input | Esc: Exit Command Mode"
+                    }
                     EditorMode::Search => "Type to search | Esc: Exit Search Mode",
                 }
             } else {

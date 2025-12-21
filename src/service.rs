@@ -825,24 +825,24 @@ fn parse_server_info(info: &str) -> Result<(ServerInfo, Vec<DbInfo>)> {
             if let Some(val) = line.strip_prefix("used_memory:") {
                 used_memory = val.trim().parse().unwrap_or(0);
             }
-        } else if line.starts_with("db") {
-            if let Some(colon_pos) = line.find(':') {
-                let db_name = &line[..colon_pos];
-                if let Some(db_num_str) = db_name.strip_prefix("db") {
-                    if let Ok(db_num) = db_num_str.parse::<u32>() {
-                        let mut keys_count = 0;
-                        if let Some(keys_part) = line.split("keys=").nth(1) {
-                            if let Some(keys_str) = keys_part.split(',').next() {
-                                keys_count = keys_str.parse().unwrap_or(0);
-                                total_keys += keys_count;
-                            }
-                        }
-                        db_list.push(DbInfo {
-                            index: db_num,
-                            keys_count,
-                        });
-                    }
+        } else if line.starts_with("db")
+            && let Some(colon_pos) = line.find(':')
+        {
+            let db_name = &line[..colon_pos];
+            if let Some(db_num_str) = db_name.strip_prefix("db")
+                && let Ok(db_num) = db_num_str.parse::<u32>()
+            {
+                let mut keys_count = 0;
+                if let Some(keys_part) = line.split("keys=").nth(1)
+                    && let Some(keys_str) = keys_part.split(',').next()
+                {
+                    keys_count = keys_str.parse().unwrap_or(0);
+                    total_keys += keys_count;
                 }
+                db_list.push(DbInfo {
+                    index: db_num,
+                    keys_count,
+                });
             }
         }
     }

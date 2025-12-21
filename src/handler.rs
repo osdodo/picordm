@@ -300,14 +300,14 @@ async fn handle_db_selector(
             app.previous_db();
         }
         KeyCode::Enter => {
-            if let Some(selected_idx) = app.db_selector_state.selected() {
-                if let Some(db) = app.db_list.get(selected_idx) {
-                    let db_index = db.index;
-                    app.is_loading_keys = true;
-                    terminal.draw(|f| ui::draw(f, app))?;
-                    app.switch_db(db_index).await?;
-                    app.is_loading_keys = false;
-                }
+            if let Some(selected_idx) = app.db_selector_state.selected()
+                && let Some(db) = app.db_list.get(selected_idx)
+            {
+                let db_index = db.index;
+                app.is_loading_keys = true;
+                terminal.draw(|f| ui::draw(f, app))?;
+                app.switch_db(db_index).await?;
+                app.is_loading_keys = false;
             }
             app.is_db_selector_open = false;
         }
@@ -444,19 +444,18 @@ async fn handle_key_search(
         }
         KeyCode::Enter => {
             app.is_searching_keys = false;
-            if !app.get_filtered_keys().is_empty() {
-                if let Some(selected_idx) = app.key_list_state.selected() {
-                    let filtered_keys = app.get_filtered_keys();
-                    if let Some(selected_key) = filtered_keys.get(selected_idx) {
-                        if let Some(original_idx) = app.keys.iter().position(|k| k == selected_key)
-                        {
-                            app.key_list_state.select(Some(original_idx));
-                            app.is_loading_value = true;
-                            terminal.draw(|f| ui::draw(f, app))?;
-                            app.fetch_value(true).await?;
-                            app.is_loading_value = false;
-                        }
-                    }
+            if !app.get_filtered_keys().is_empty()
+                && let Some(selected_idx) = app.key_list_state.selected()
+            {
+                let filtered_keys = app.get_filtered_keys();
+                if let Some(selected_key) = filtered_keys.get(selected_idx)
+                    && let Some(original_idx) = app.keys.iter().position(|k| k == selected_key)
+                {
+                    app.key_list_state.select(Some(original_idx));
+                    app.is_loading_value = true;
+                    terminal.draw(|f| ui::draw(f, app))?;
+                    app.fetch_value(true).await?;
+                    app.is_loading_value = false;
                 }
             }
         }
@@ -471,12 +470,10 @@ async fn handle_key_search(
                             } else {
                                 i + 1
                             }
+                        } else if i == 0 {
+                            filtered_keys.len() - 1
                         } else {
-                            if i == 0 {
-                                filtered_keys.len() - 1
-                            } else {
-                                i - 1
-                            }
+                            i - 1
                         }
                     }
                     None => 0,
@@ -570,48 +567,52 @@ async fn handle_dashboard_normal(
         {
             // Ignore Alt and Super modifier keys
         }
-        KeyCode::Char('/') => {
-            if app.current_screen == CurrentScreen::Dashboard {
+        KeyCode::Char('/') => match app.current_screen {
+            CurrentScreen::Dashboard => {
                 app.is_searching_keys = true;
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                // In KeyContent, pass to edtui (search in vim)
+            }
+            CurrentScreen::KeyContent => {
                 app.editor_event_handler
                     .on_key_event(key, &mut app.editor_state);
             }
-        }
+            _ => {}
+        },
         KeyCode::Char('>') => {
             // Only in Dashboard mode
             if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_command_mode();
             }
         }
-        KeyCode::Char(' ') => {
-            if app.current_screen == CurrentScreen::Dashboard {
+        KeyCode::Char(' ') => match app.current_screen {
+            CurrentScreen::Dashboard => {
                 app.toggle_key_selection();
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                // Pass to edtui
+            }
+            CurrentScreen::KeyContent => {
                 app.editor_event_handler
                     .on_key_event(key, &mut app.editor_state);
             }
-        }
-        KeyCode::Down => {
-            if app.current_screen == CurrentScreen::Dashboard {
+            _ => {}
+        },
+        KeyCode::Down => match app.current_screen {
+            CurrentScreen::Dashboard => {
                 app.next_key();
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                // Pass to edtui (j in Normal mode, or arrow in Insert mode)
+            }
+            CurrentScreen::KeyContent => {
                 app.editor_event_handler
                     .on_key_event(key, &mut app.editor_state);
             }
-        }
-        KeyCode::Up => {
-            if app.current_screen == CurrentScreen::Dashboard {
+            _ => {}
+        },
+        KeyCode::Up => match app.current_screen {
+            CurrentScreen::Dashboard => {
                 app.previous_key();
-            } else if app.current_screen == CurrentScreen::KeyContent {
-                // Pass to edtui (k in Normal mode, or arrow in Insert mode)
+            }
+            CurrentScreen::KeyContent => {
                 app.editor_event_handler
                     .on_key_event(key, &mut app.editor_state);
             }
-        }
+            _ => {}
+        },
 
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Redo in KeyContent mode (pass to edtui)

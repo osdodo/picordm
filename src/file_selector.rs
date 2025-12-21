@@ -25,10 +25,10 @@ impl FileSelector {
 
     fn is_hidden_file(path: &std::path::Path) -> bool {
         // Unix/Linux/macOS: Check if the filename starts with a dot (.)
-        if let Some(file_name) = path.file_name() {
-            if file_name.to_string_lossy().starts_with('.') {
-                return true;
-            }
+        if let Some(file_name) = path.file_name()
+            && file_name.to_string_lossy().starts_with('.')
+        {
+            return true;
         }
 
         // Windows: Check file attributes
@@ -79,14 +79,13 @@ impl FileSelector {
 
                 if path.is_dir() {
                     dirs.push(DirEntry::Directory(path));
-                } else if let Some(extension) = path.extension() {
-                    if extension
+                } else if let Some(extension) = path.extension()
+                    && extension
                         .to_str()
-                        .map_or(false, |ext| ext.eq_ignore_ascii_case("json"))
-                    {
-                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                        files.push(DirEntry::JsonFile(path, size));
-                    }
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+                {
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    files.push(DirEntry::JsonFile(path, size));
                 }
             }
 
