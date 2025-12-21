@@ -14,9 +14,8 @@ serde_json = "1.0.145"
 anyhow = "1.0.100"
 uuid = { version = "1.19.0", features = ["v4", "serde"] }
 tokio = { version = "1.48.0", features = ["full"] }
-tui-textarea = "0.7.0"
+edtui = "0.9"
 regex = "1.12.2"
-syntect = { version = "5.3.0", features = ["default-fancy"] }
 arboard = "3.6.1"
 chrono = "0.4.42"
 log = "0.4"

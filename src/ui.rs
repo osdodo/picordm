@@ -1,5 +1,4 @@
-use std::sync::OnceLock;
-
+use edtui::{EditorTheme, EditorView, SyntaxHighlighter};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Margin, Rect},
@@ -7,26 +6,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
-use syntect::parsing::SyntaxSet;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, CurrentScreen};
 use crate::connection::FormField;
 use crate::file_selector::DirEntry;
-
-// Cache syntect resources for better performance
-static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
-
-fn get_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
-fn get_theme_set() -> &'static ThemeSet {
-    THEME_SET.get_or_init(ThemeSet::load_defaults)
-}
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
@@ -40,13 +24,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .split(size);
 
     render_header(frame, app, chunks[0]);
-
-    if app.current_screen == CurrentScreen::JsonEditor {
-        render_json_editor(frame, app, chunks[1]);
-    } else {
-        render_main(frame, app, chunks[1]);
-    }
-
+    render_main(frame, app, chunks[1]);
     render_footer(frame, app, chunks[2]);
 
     // Overlays
@@ -145,7 +123,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(memory, Style::default().fg(Color::Green)),
                 Span::raw("  |  "),
                 Span::styled(
-                    "[Ctrl+R]",
+                    "[F5]",
                     Style::default()
                         .fg(Color::Gray)
                         .add_modifier(Modifier::BOLD),
@@ -165,7 +143,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled("Loading server info...", Style::default().fg(Color::Gray)),
                 Span::raw("  "),
                 Span::styled(
-                    "[Ctrl+R]",
+                    "[F5]",
                     Style::default()
                         .fg(Color::Gray)
                         .add_modifier(Modifier::BOLD),
@@ -316,9 +294,11 @@ fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // Otherwise show key value viewer
-    let title = if !app.current_value.is_empty() && app.is_json_content {
-        "View (Press 'e' to edit | ↑↓ to scroll)"
+    // Otherwise show key value viewer using edtui (Vim-style editing)
+    let title = if app.is_vim_command_mode {
+        "Vim Command Mode (Enter to execute, Esc to cancel)"
+    } else if !app.current_value.is_empty() {
+        "View/Edit (Vim: :w=Save :q=Quit :wq=Save&Quit)"
     } else {
         "View"
     };
@@ -349,58 +329,63 @@ fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
             .block(block)
             .wrap(Wrap { trim: true });
         frame.render_widget(paragraph, area);
-    } else if !app.current_value.is_empty() && app.is_json_content {
-        // Clamp scroll offset to valid range
-        let inner_height = area.height.saturating_sub(1); // Account for borders
-        let content_lines = app.current_value.lines().count() as u16;
-        if content_lines > inner_height {
-            let max_scroll = content_lines.saturating_sub(inner_height);
-            if app.scroll_offset > max_scroll {
-                app.scroll_offset = max_scroll;
-            }
-        } else {
-            app.scroll_offset = 0;
-        }
-
-        // Display key-value pairs in JSON format
-        // Use cached highlighted JSON if available, otherwise generate and cache it
-        if app.cached_highlighted_json.is_none() {
-            if let Ok(lines) = highlight_json_with_syntect(&app.current_value) {
-                app.cached_highlighted_json = Some(lines);
-            }
-        }
-
-        if let Some(lines) = &app.cached_highlighted_json {
-            let paragraph = Paragraph::new(lines.clone())
-                .block(block)
-                .scroll((app.scroll_offset, 0));
-            frame.render_widget(paragraph, area);
-        } else {
-            let paragraph = Paragraph::new(app.current_value.clone())
-                .block(block)
-                .scroll((app.scroll_offset, 0))
-                .wrap(Wrap { trim: true });
-            frame.render_widget(paragraph, area);
-        }
     } else if !app.current_value.is_empty() {
-        // Clamp scroll offset to valid range
-        let inner_height = area.height.saturating_sub(1); // Account for borders
-        let content_lines = app.current_value.lines().count() as u16;
-        if content_lines > inner_height {
-            let max_scroll = content_lines.saturating_sub(inner_height);
-            if app.scroll_offset > max_scroll {
-                app.scroll_offset = max_scroll;
+        // Use edtui for both viewing and editing
+        if app.is_vim_command_mode {
+            // Split area to show editor and command line
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(1),    // Editor
+                    Constraint::Length(1), // Command line
+                ])
+                .split(area.inner(Margin::new(1, 1)));
+
+            // Render editor without block, with optional syntax highlighting
+            let mut editor_view = EditorView::new(&mut app.editor_state);
+
+            // Add JSON syntax highlighting if content is JSON
+            if app.is_json_content {
+                let syntax_highlighter = SyntaxHighlighter::new("visual-studio-dark", "json");
+                editor_view = editor_view.syntax_highlighter(Some(syntax_highlighter));
+            }
+
+            frame.render_widget(editor_view, chunks[0]);
+
+            // Render Vim command line
+            let cmd_line = format!(":{}", app.vim_command_input);
+            let cmd_paragraph = Paragraph::new(cmd_line).style(Style::default().fg(Color::Yellow));
+            frame.render_widget(cmd_paragraph, chunks[1]);
+
+            // Render block border
+            frame.render_widget(block, area);
+
+            // Set cursor position at end of command input
+            let cursor_x = area.x + 2 + app.vim_command_input.len() as u16;
+            let cursor_y = area.bottom() - 2;
+            if cursor_x < area.right() && cursor_y < area.bottom() {
+                frame.set_cursor_position(ratatui::layout::Position {
+                    x: cursor_x,
+                    y: cursor_y,
+                });
             }
         } else {
-            app.scroll_offset = 0;
-        }
+            // Normal editor view with optional syntax highlighting
+            let theme = EditorTheme {
+                block: Some(block),
+                ..Default::default()
+            };
 
-        // Display key-value pairs in plain text format
-        let paragraph = Paragraph::new(app.current_value.clone())
-            .block(block)
-            .scroll((app.scroll_offset, 0))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
+            let mut editor_view = EditorView::new(&mut app.editor_state).theme(theme);
+
+            // Add JSON syntax highlighting if content is JSON
+            if app.is_json_content {
+                let syntax_highlighter = SyntaxHighlighter::new("visual-studio-dark", "json");
+                editor_view = editor_view.syntax_highlighter(Some(syntax_highlighter));
+            }
+
+            frame.render_widget(editor_view, area);
+        }
     } else {
         // Default prompt
         let paragraph =
@@ -410,89 +395,6 @@ fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
                 .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(paragraph, area);
     }
-}
-
-fn render_json_editor(frame: &mut Frame, app: &mut App, area: Rect) {
-    // Get cursor position from textarea
-    let (cursor_row, cursor_col) = app.json_editor.cursor();
-
-    // Add cursor indicator to title
-    let title = format!(
-        "JSON Editor (Esc: Cancel, Ctrl+s: Save, Ctrl+q: Quit) - Ln {}, Col {}",
-        cursor_row + 1,
-        cursor_col + 1
-    );
-
-    app.json_editor.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
-            .title(Span::styled(
-                title,
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )),
-    );
-    
-    frame.render_widget(&app.json_editor, area);
-}
-
-fn highlight_json_with_syntect(
-    text: &str,
-) -> Result<Vec<Line<'static>>, Box<dyn std::error::Error>> {
-    let ps = get_syntax_set();
-    let ts = get_theme_set();
-
-    let syntax = ps
-        .find_syntax_by_extension("json")
-        .ok_or("JSON syntax not found")?;
-
-    let theme = ts
-        .themes
-        .get("base16-eighties.dark")
-        .ok_or("base16-eighties.dark theme not found")?;
-
-    let mut h = HighlightLines::new(syntax, theme);
-
-    let mut highlighted_lines = Vec::new();
-
-    for line in text.lines() {
-        let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, ps)?;
-        let mut spans = Vec::new();
-
-        for (style, text) in ranges {
-            let fg = style.foreground;
-            let color = Color::Rgb(fg.r, fg.g, fg.b);
-
-            let mut ratatui_style = Style::default().fg(color);
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::BOLD)
-            {
-                ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::ITALIC)
-            {
-                ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
-            }
-            if style
-                .font_style
-                .contains(syntect::highlighting::FontStyle::UNDERLINE)
-            {
-                ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
-            }
-
-            spans.push(Span::styled(text.to_string(), ratatui_style));
-        }
-
-        highlighted_lines.push(Line::from(spans));
-    }
-
-    Ok(highlighted_lines)
 }
 
 fn render_connection_list(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -675,10 +577,8 @@ fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
 fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.command_output.is_empty() {
         "Command Output"
-    } else if app.is_json_content {
-        "Command Output (↑↓ to scroll)"
     } else {
-        "Command Output (↑↓ to scroll)"
+        "Command Output"
     };
 
     let block = Block::default()
@@ -698,47 +598,13 @@ fn render_command_output(frame: &mut Frame, app: &mut App, area: Rect) {
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(paragraph, area);
     } else {
-        // Reuse the exact same logic as render_content_area for value display
-        let inner_height = area.height.saturating_sub(2); // Account for borders
-        let content_lines = app.current_value.lines().count() as u16;
-
-        if content_lines > inner_height {
-            let max_scroll = content_lines.saturating_sub(inner_height);
-            if app.scroll_offset > max_scroll {
-                app.scroll_offset = max_scroll;
-            }
-        } else {
-            app.scroll_offset = 0;
-        }
-
-        if app.is_json_content {
-            // Use cached highlighted JSON if available, otherwise generate and cache it
-            if app.cached_highlighted_json.is_none() {
-                if let Ok(lines) = highlight_json_with_syntect(&app.current_value) {
-                    app.cached_highlighted_json = Some(lines);
-                }
-            }
-
-            if let Some(lines) = &app.cached_highlighted_json {
-                let paragraph = Paragraph::new(lines.clone())
-                    .block(block)
-                    .scroll((app.scroll_offset, 0));
-                frame.render_widget(paragraph, area);
-            } else {
-                let paragraph = Paragraph::new(app.current_value.clone())
-                    .block(block)
-                    .scroll((app.scroll_offset, 0))
-                    .wrap(Wrap { trim: true });
-                frame.render_widget(paragraph, area);
-            }
-        } else {
-            // Display plain text with scrolling
-            let paragraph = Paragraph::new(app.current_value.clone())
-                .block(block)
-                .scroll((app.scroll_offset, 0))
-                .wrap(Wrap { trim: true });
-            frame.render_widget(paragraph, area);
-        }
+        // Use edtui to display command output
+        let theme = EditorTheme {
+            block: Some(block),
+            ..Default::default()
+        };
+        let editor_view = EditorView::new(&mut app.editor_state).theme(theme);
+        frame.render_widget(editor_view, area);
     }
 }
 
@@ -845,7 +711,7 @@ fn render_db_selector(frame: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.is_db_selector_open {
         "Database (Esc to close | ↑↓ to navigate | Enter to select)"
     } else {
-        "Database (Press 'Ctrl+d' to select)"
+        "Database (Press 'Ctrl+n' to select)"
     };
 
     let selector_widget = Paragraph::new(display_text)
@@ -943,15 +809,14 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                         "Space: Toggle | Ctrl+a: Select/Clear All | Delete/Backspace: Delete | Enter: View Value | /: Search | >: Command | Ctrl+b: Disconnect | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import"
                     }
                     _ => {
-                        "Space: Select | Enter: View Value | Ctrl+a: Select All | /: Search | >: Command | Ctrl+d: Switch DB | Ctrl+r: Refresh | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
+                        "Space: Select | Enter: View Value | Ctrl+a: Select All | /: Search | >: Command | Ctrl+n: Switch DB | F5: Refresh | Ctrl+t: Switch Connection | Ctrl+b: Disconnect | Ctrl+e: Export | Ctrl+l: Import"
                     }
                 }
             }
         }
         CurrentScreen::KeyContent => {
-            "b: Back | e: Edit JSON | ↑↓: Scroll | Ctrl+t: Switch Connection | Ctrl+e: Export | Ctrl+l: Import | Ctrl+q: Quit"
+            "Vim: :w(Save) :q(Quit) :wq(Save&Quit) | i(Insert) v(Visual) hjkl(Navigate) | Ctrl+q: Exit App"
         }
-        CurrentScreen::JsonEditor => "Esc: Cancel | Ctrl+s: Save | Ctrl+q: Quit",
         CurrentScreen::CommandMode => "Enter: Execute | ↑↓: Scroll | Esc: Exit Command Mode",
         CurrentScreen::FileSelector => "↑↓: Navigate | Enter: Import | Esc: Cancel",
         CurrentScreen::ConnectionSwitcher => {

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use edtui::EditorState;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -8,7 +9,7 @@ use crate::ui;
 
 pub async fn handle_key_event(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<bool> {
     // Handle progress dialog first - block most input during operations
@@ -20,11 +21,6 @@ pub async fn handle_key_event(
             }
         }
         // Block all other input during progress operations
-        return Ok(false);
-    }
-
-    if app.current_screen == CurrentScreen::JsonEditor {
-        handle_json_editor(terminal, app, key).await?;
         return Ok(false);
     }
 
@@ -51,37 +47,12 @@ pub async fn handle_key_event(
         CurrentScreen::ConnectionSwitcher => {
             handle_connection_switcher(terminal, app, key).await?;
         }
-        CurrentScreen::JsonEditor => {
-            // Already handled above
-        }
     }
 
     Ok(false)
 }
 
-async fn handle_json_editor(
-    _terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
-    key: KeyEvent,
-) -> Result<()> {
-    match key.code {
-        KeyCode::Esc => {
-            app.current_screen = CurrentScreen::KeyContent;
-        }
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.current_value = app.json_editor.lines().join("\n");
-            app.cached_highlighted_json = None; // Clear cache after editing
-            app.save_current_value().await?;
-            app.current_screen = CurrentScreen::KeyContent;
-        }
-        _ => {
-            app.json_editor.input(key);
-        }
-    }
-    Ok(())
-}
-
-async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
+async fn handle_global_shortcuts(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -125,7 +96,7 @@ async fn handle_global_shortcuts(app: &mut App<'_>, key: KeyEvent) -> bool {
     }
 }
 
-fn handle_connection_form(app: &mut App<'_>, key: KeyEvent) -> Result<()> {
+fn handle_connection_form(app: &mut App, key: KeyEvent) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.current_screen = CurrentScreen::ConnectionList;
@@ -163,7 +134,7 @@ fn handle_connection_form(app: &mut App<'_>, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-fn handle_form_enter(app: &mut App<'_>) -> Result<()> {
+fn handle_form_enter(app: &mut App) -> Result<()> {
     match app.connection_form.editing_field {
         FormField::UseTls => {
             app.connection_form.use_tls = !app.connection_form.use_tls;
@@ -179,7 +150,7 @@ fn handle_form_enter(app: &mut App<'_>) -> Result<()> {
     Ok(())
 }
 
-fn handle_form_char_input(app: &mut App<'_>, c: char) {
+fn handle_form_char_input(app: &mut App, c: char) {
     match app.connection_form.editing_field {
         FormField::Name => app.connection_form.name.push(c),
         FormField::Host => app.connection_form.host.push(c),
@@ -216,7 +187,7 @@ fn handle_form_char_input(app: &mut App<'_>, c: char) {
     }
 }
 
-fn handle_form_backspace(app: &mut App<'_>) {
+fn handle_form_backspace(app: &mut App) {
     match app.connection_form.editing_field {
         FormField::Name => {
             app.connection_form.name.pop();
@@ -254,7 +225,7 @@ fn handle_form_backspace(app: &mut App<'_>) {
 
 async fn handle_connection_list(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     // Only respond to keys without modifier keys
@@ -300,7 +271,7 @@ async fn handle_connection_list(
 
 async fn handle_dashboard_and_key_content(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     if app.current_screen == CurrentScreen::Dashboard && app.is_db_selector_open {
@@ -315,7 +286,7 @@ async fn handle_dashboard_and_key_content(
 
 async fn handle_db_selector(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     match key.code {
@@ -347,18 +318,26 @@ async fn handle_db_selector(
 
 async fn handle_command_mode(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
             app.toggle_command_mode();
         }
-        KeyCode::Down => {
-            app.scroll_down();
-        }
-        KeyCode::Up => {
-            app.scroll_up();
+        KeyCode::Down
+        | KeyCode::Up
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::PageDown
+        | KeyCode::PageUp
+        | KeyCode::Home
+        | KeyCode::End => {
+            // Pass navigation keys to edtui for scrolling in output
+            if !app.command_output.is_empty() {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
         }
         KeyCode::Char(c) => {
             // Ignore character input with Ctrl, Alt, or Super (Cmd) modifier keys
@@ -384,7 +363,7 @@ async fn handle_command_mode(
 
 async fn handle_key_search(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     match key.code {
@@ -474,7 +453,7 @@ async fn handle_key_search(
 
 async fn handle_dashboard_normal(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     // Handle delete confirmation dialog
@@ -516,12 +495,12 @@ async fn handle_dashboard_normal(
                 }
             }
         }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_db_selector();
             }
         }
-        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::F(5) => {
             app.is_loading_server_info = true;
             terminal.draw(|f| ui::draw(f, app))?;
             let _ = app.load_server_info().await;
@@ -553,49 +532,94 @@ async fn handle_dashboard_normal(
         {
             // Ignore Alt and Super modifier keys
         }
-        KeyCode::Char(' ') => {
-            if app.current_screen == CurrentScreen::Dashboard {
-                app.toggle_key_selection();
-            }
-        }
-        KeyCode::Delete | KeyCode::Backspace => {
-            if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
-                app.open_delete_confirmation();
-            }
-        }
         KeyCode::Char('/') => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.is_searching_keys = true;
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                // In KeyContent, pass to edtui (search in vim)
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
             }
         }
         KeyCode::Char('>') => {
-            if app.current_screen == CurrentScreen::Dashboard
-                || app.current_screen == CurrentScreen::KeyContent
-            {
+            // Only in Dashboard mode
+            if app.current_screen == CurrentScreen::Dashboard {
                 app.toggle_command_mode();
+            }
+        }
+        KeyCode::Char(' ') => {
+            if app.current_screen == CurrentScreen::Dashboard {
+                app.toggle_key_selection();
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                // Pass to edtui
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
             }
         }
         KeyCode::Down => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.next_key();
             } else if app.current_screen == CurrentScreen::KeyContent {
-                app.scroll_down();
+                // Pass to edtui (j in Normal mode, or arrow in Insert mode)
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
             }
         }
         KeyCode::Up => {
             if app.current_screen == CurrentScreen::Dashboard {
                 app.previous_key();
             } else if app.current_screen == CurrentScreen::KeyContent {
-                app.scroll_up();
+                // Pass to edtui (k in Normal mode, or arrow in Insert mode)
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
             }
         }
-        KeyCode::Char('e') => {
-            if (app.current_screen == CurrentScreen::KeyContent
-                || app.current_screen == CurrentScreen::Dashboard)
-                && app.is_json_content
-                && !app.current_value.is_empty()
-            {
-                app.current_screen = CurrentScreen::JsonEditor;
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Save in KeyContent mode (override edtui) - kept for compatibility
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.save_current_value().await?;
+            }
+        }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Redo in KeyContent mode (pass to edtui)
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Half page down in KeyContent mode (pass to edtui)
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Half page up in KeyContent mode (pass to edtui)
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
+        }
+        KeyCode::Char(':') => {
+            // Enter Vim command mode in KeyContent
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.is_vim_command_mode = true;
+                app.vim_command_input.clear();
+            }
+        }
+        KeyCode::Esc => {
+            // Exit Vim command mode or pass to edtui
+            if app.current_screen == CurrentScreen::KeyContent {
+                if app.is_vim_command_mode {
+                    // Exit Vim command mode
+                    app.is_vim_command_mode = false;
+                    app.vim_command_input.clear();
+                } else {
+                    // Pass Esc to edtui (to exit Insert/Visual mode)
+                    app.editor_event_handler
+                        .on_key_event(key, &mut app.editor_state);
+                }
             }
         }
         KeyCode::Enter => {
@@ -607,18 +631,100 @@ async fn handle_dashboard_normal(
                 terminal.draw(|f| ui::draw(f, app))?;
                 app.fetch_value(true).await?;
                 app.is_loading_value = false;
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                if app.is_vim_command_mode {
+                    // Execute Vim command
+                    let cmd = app.vim_command_input.trim();
+                    match cmd {
+                        "w" => {
+                            // Save
+                            app.save_current_value().await?;
+                        }
+                        "q" => {
+                            // Quit (return to Dashboard)
+                            app.current_screen = CurrentScreen::Dashboard;
+                            app.current_value.clear();
+                            app.editor_state = EditorState::default();
+                        }
+                        "wq" | "x" => {
+                            // Save and quit
+                            app.save_current_value().await?;
+                            app.current_screen = CurrentScreen::Dashboard;
+                            app.current_value.clear();
+                            app.editor_state = EditorState::default();
+                        }
+                        "q!" => {
+                            // Force quit without saving
+                            app.current_screen = CurrentScreen::Dashboard;
+                            app.current_value.clear();
+                            app.editor_state = EditorState::default();
+                        }
+                        _ => {
+                            // Unknown command, ignore
+                        }
+                    }
+                    app.is_vim_command_mode = false;
+                    app.vim_command_input.clear();
+                } else {
+                    // Pass Enter to edtui (newline in Insert mode, or 'o' behavior)
+                    app.editor_event_handler
+                        .on_key_event(key, &mut app.editor_state);
+                }
             }
         }
-        // Ignore all other character inputs to prevent unexpected actions during paste.
-        KeyCode::Char(_) => {}
-        _ => {}
+        KeyCode::Delete | KeyCode::Backspace => {
+            if app.current_screen == CurrentScreen::Dashboard && !app.selected_keys.is_empty() {
+                app.open_delete_confirmation();
+            } else if app.current_screen == CurrentScreen::KeyContent {
+                if app.is_vim_command_mode {
+                    // Handle backspace in Vim command mode
+                    app.vim_command_input.pop();
+                } else {
+                    // Pass to edtui for editing
+                    app.editor_event_handler
+                        .on_key_event(key, &mut app.editor_state);
+                }
+            }
+        }
+        // Route navigation and other keys to edtui when in KeyContent mode
+        KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Home
+        | KeyCode::End
+        | KeyCode::PageUp
+        | KeyCode::PageDown
+        | KeyCode::Tab => {
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
+        }
+        // Route other character keys to edtui when in KeyContent mode
+        // This includes vim commands like i, v, h, j, k, l, w, e, b, etc.
+        KeyCode::Char(c) => {
+            if app.current_screen == CurrentScreen::KeyContent {
+                if app.is_vim_command_mode {
+                    // Add character to Vim command input
+                    app.vim_command_input.push(c);
+                } else {
+                    app.editor_event_handler
+                        .on_key_event(key, &mut app.editor_state);
+                }
+            }
+        }
+        _ => {
+            if app.current_screen == CurrentScreen::KeyContent && !app.is_vim_command_mode {
+                app.editor_event_handler
+                    .on_key_event(key, &mut app.editor_state);
+            }
+        }
     }
     Ok(())
 }
 
 async fn handle_file_selector(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     match key.code {
@@ -655,7 +761,7 @@ async fn handle_file_selector(
 
 async fn handle_connection_switcher(
     terminal: &mut DefaultTerminal,
-    app: &mut App<'_>,
+    app: &mut App,
     key: KeyEvent,
 ) -> Result<()> {
     match key.code {

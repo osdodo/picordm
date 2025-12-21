@@ -82,3 +82,9 @@ Redis 集群设置请参阅 [集群文档](docs/CLUSTER_CN.md)。
 - **macOS (iTerm2/Terminal)**：按住 `Option/Alt` 键并用鼠标选择文本，然后按 `Cmd+C` 复制
 - **Linux**：按住 `Shift` 键并用鼠标选择文本，然后按 `Ctrl+Shift+C` 复制
 - **Windows**：按住 `Shift` 键并用鼠标选择文本，然后右键复制
+
+## 文档
+
+- [按键绑定](docs/KEYBINDINGS_CN.md) - 完整的键盘快捷键参考
+- [集群设置](docs/CLUSTER_CN.md) - Redis 集群配置指南
+- [导入/导出](docs/IMPORT_DATA_CN.md) - 数据导入/导出格式详情

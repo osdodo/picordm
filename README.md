@@ -82,3 +82,9 @@ To copy text from the interface, use your terminal's text selection feature:
 - **macOS (iTerm2/Terminal)**: Hold `Option/Alt` key and select text with mouse, then `Cmd+C` to copy
 - **Linux**: Hold `Shift` key and select text with mouse, then `Ctrl+Shift+C` to copy
 - **Windows**: Hold `Shift` key and select text with mouse, then right-click to copy
+
+## Documentation
+
+- [Keybindings](docs/KEYBINDINGS.md) - Complete keyboard shortcuts reference
+- [Cluster Setup](docs/CLUSTER.md) - Redis Cluster configuration guide
+- [Import/Export](docs/IMPORT_DATA.md) - Data import/export format details

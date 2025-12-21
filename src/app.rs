@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use edtui::{EditorEventHandler, EditorState, Lines};
 use ratatui::crossterm::event::{self, Event};
 use ratatui::widgets::ListState;
-use tui_textarea::TextArea;
 
 use crate::connection::{ConnectionForm, ConnectionList};
 use crate::file_selector::FileSelector;
@@ -19,7 +19,6 @@ pub enum CurrentScreen {
     Dashboard,
     KeyContent,
     NewConnectionForm,
-    JsonEditor,
     CommandMode,
     FileSelector,
     ConnectionSwitcher,
@@ -34,7 +33,7 @@ pub struct ProgressDialog {
     pub completed_at: Option<std::time::Instant>,
 }
 
-pub struct App<'a> {
+pub struct App {
     // Screen state
     pub current_screen: CurrentScreen,
 
@@ -66,9 +65,12 @@ pub struct App<'a> {
     // Key value viewer
     pub current_value: String,
     pub is_json_content: bool,
-    pub scroll_offset: u16,
-    pub json_editor: TextArea<'a>,
-    pub cached_highlighted_json: Option<Vec<ratatui::text::Line<'static>>>,
+    pub editor_state: EditorState,
+    pub editor_event_handler: EditorEventHandler,
+
+    // Vim command mode (for :w, :q, :wq)
+    pub vim_command_input: String,
+    pub is_vim_command_mode: bool,
 
     // Command input
     pub command_input: String,
@@ -97,7 +99,7 @@ pub struct App<'a> {
     pub file_selector: FileSelector,
 }
 
-impl<'a> App<'a> {
+impl App {
     pub fn new() -> Self {
         let mut key_list_state = ListState::default();
         key_list_state.select(Some(0));
@@ -128,9 +130,10 @@ impl<'a> App<'a> {
             is_delete_confirmation_open: false,
             current_value: String::new(),
             is_json_content: false,
-            scroll_offset: 0,
-            json_editor: TextArea::default(),
-            cached_highlighted_json: None,
+            editor_state: EditorState::default(),
+            editor_event_handler: EditorEventHandler::default(),
+            vim_command_input: String::new(),
+            is_vim_command_mode: false,
             pending_connection: false,
             pending_dashboard_data: false,
             is_connecting: false,
@@ -202,7 +205,7 @@ impl<'a> App<'a> {
         // Clear previous connection state
         self.current_value.clear();
         self.is_json_content = false;
-        self.scroll_offset = 0;
+        self.editor_state = EditorState::default();
     }
 
     pub async fn connect_to_selected(&mut self) -> Result<()> {
@@ -323,12 +326,12 @@ impl<'a> App<'a> {
                 };
 
                 self.current_value = content.clone();
-                self.json_editor = TextArea::from(content.lines());
                 self.is_json_content = is_json;
-                self.cached_highlighted_json = None; // Clear cache when loading new value
                 self.command_output.clear();
                 self.error_message = None;
-                self.scroll_offset = 0;
+
+                // Load content into editor
+                self.editor_state = EditorState::new(Lines::from(content.as_str()));
 
                 if switch_screen {
                     self.current_screen = CurrentScreen::KeyContent;
@@ -349,12 +352,16 @@ impl<'a> App<'a> {
             return Ok(());
         };
 
+        // Get content from editor
+        let value_to_save = String::from(self.editor_state.lines.clone());
+
         match self
             .redis
-            .set_value(key, &self.current_value, self.current_db_index)
+            .set_value(key, &value_to_save, self.current_db_index)
             .await
         {
             Ok(_) => {
+                self.current_value = value_to_save;
                 self.error_message = None;
             }
             Err(e) => {
@@ -362,14 +369,6 @@ impl<'a> App<'a> {
             }
         }
         Ok(())
-    }
-
-    pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(2);
-    }
-
-    pub fn scroll_down(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(2);
     }
 
     pub fn next_connection(&mut self) {
@@ -567,23 +566,28 @@ impl<'a> App<'a> {
         // Generate name if empty
         if form.name.is_empty() {
             if form.is_cluster {
-                let first_node = form.cluster_nodes
+                let first_node = form
+                    .cluster_nodes
                     .split(',')
                     .next()
                     .unwrap_or("cluster")
                     .trim()
                     .to_string();
-                
+
                 // Extract host from first node (remove port)
                 let base_name = if let Some(idx) = first_node.find(':') {
                     &first_node[..idx]
                 } else {
                     &first_node
                 };
-                
+
                 let name_exists = self.connection_list.find_by_name(base_name);
                 form.name = if name_exists {
-                    format!("{}-cluster-{}", base_name, chrono::Local::now().format("%H%M%S"))
+                    format!(
+                        "{}-cluster-{}",
+                        base_name,
+                        chrono::Local::now().format("%H%M%S")
+                    )
                 } else {
                     format!("{}-cluster", base_name)
                 };
@@ -636,7 +640,7 @@ impl<'a> App<'a> {
         self.keys.clear();
         self.current_value.clear();
         self.is_json_content = false;
-        self.scroll_offset = 0;
+        self.editor_state = EditorState::default();
 
         // Reset header information
         self.current_connection_name = None;
@@ -884,12 +888,10 @@ impl<'a> App<'a> {
             self.is_json_content = false;
         }
 
-        self.cached_highlighted_json = None; // Clear cache for new content
+        // Load output into editor
+        self.editor_state = EditorState::new(Lines::from(self.current_value.as_str()));
 
         self.command_input.clear();
-
-        // Reset scroll to top for new output
-        self.scroll_offset = 0;
 
         Ok(())
     }
@@ -903,8 +905,7 @@ impl<'a> App<'a> {
             self.command_output.clear();
             self.current_value.clear();
             self.is_json_content = false;
-            self.scroll_offset = 0;
-            self.cached_highlighted_json = None;
+            self.editor_state = EditorState::default();
         } else {
             // Enter command mode
             self.current_screen = CurrentScreen::CommandMode;
@@ -1207,7 +1208,7 @@ impl<'a> App<'a> {
                 self.keys.clear();
                 self.current_value.clear();
                 self.is_json_content = false;
-                self.scroll_offset = 0;
+                self.editor_state = EditorState::default();
                 self.server_info = None;
                 self.db_list.clear();
                 self.current_db_index = 0;
