@@ -25,13 +25,28 @@ case "$OS" in
         ;;
 esac
 
-ARCH=$(uname -m)
-if [ "$ARCH" = "arm64" ]; then
-    ARCH_NAME="aarch64"
-elif [ "$ARCH" = "x86_64" ]; then
-    ARCH_NAME="x86_64"
+if command -v rustc &> /dev/null; then
+    RUST_TARGET=$(rustc -vV | grep "host:" | cut -d' ' -f2)
+    case "$RUST_TARGET" in
+        *aarch64*|*arm64*)
+            ARCH_NAME="arm64"
+            ;;
+        *x86_64*)
+            ARCH_NAME="x86_64"
+            ;;
+        *)
+            ARCH_NAME=$(echo "$RUST_TARGET" | cut -d'-' -f1)
+            ;;
+    esac
 else
-    ARCH_NAME="$ARCH"
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+        ARCH_NAME="arm64"
+    elif [ "$ARCH" = "x86_64" ]; then
+        ARCH_NAME="x86_64"
+    else
+        ARCH_NAME="$ARCH"
+    fi
 fi
 
 echo "Building release version for $OS_NAME-$ARCH_NAME..."
