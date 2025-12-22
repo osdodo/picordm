@@ -22,6 +22,19 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 ## Installation
 
 ```bash
+brew tap osdodo/picordm
+brew install picordm
+```
+
+Or install directly:
+
+```bash
+brew install osdodo/picordm/picordm
+```
+
+## Build from Source
+
+```bash
 cargo build --release
 ./target/release/picordm
 ```

@@ -22,6 +22,19 @@
 ## 安装
 
 ```bash
+brew tap osdodo/picordm
+brew install picordm
+```
+
+或直接安装：
+
+```bash
+brew install osdodo/picordm/picordm
+```
+
+## 从源码构建
+
+```bash
 cargo build --release
 ./target/release/picordm
 ```
