@@ -1,7 +1,7 @@
 use anyhow::Result;
 use edtui::EditorState;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{App, CurrentScreen};
 use crate::connection::FormField;
@@ -12,6 +12,11 @@ pub async fn handle_key_event(
     app: &mut App,
     key: KeyEvent,
 ) -> Result<bool> {
+    // On Windows, crossterm may fire both Press and Release events
+    // We only want to handle Press events to avoid duplicate input
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
     // Handle progress dialog first - block most input during operations
     if let Some(ref dialog) = app.progress_dialog {
         if dialog.is_complete {
