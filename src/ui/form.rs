@@ -5,10 +5,145 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
-use super::components::{CheckboxConfig, TextFieldConfig, render_checkbox, render_text_field};
 use crate::app::App;
 use crate::connection::FormField;
+
+const ACTIVE_BORDER_COLOR: Color = Color::Rgb(147, 112, 219);
+const INACTIVE_BORDER_COLOR: Color = Color::Rgb(80, 90, 110);
+const REQUIRED_COLOR: Color = Color::LightRed;
+
+struct TextFieldConfig<'a> {
+    title: &'a str,
+    value: &'a str,
+    is_required: bool,
+    is_active: bool,
+    placeholder: &'a str,
+    hint: Option<&'a str>,
+}
+
+struct CheckboxConfig<'a> {
+    title: &'a str,
+    checked: bool,
+    is_active: bool,
+}
+
+fn render_text_field(frame: &mut Frame, area: Rect, config: TextFieldConfig) -> Option<(u16, u16)> {
+    let border_color = if config.is_active {
+        ACTIVE_BORDER_COLOR
+    } else {
+        INACTIVE_BORDER_COLOR
+    };
+
+    let title_color = if config.is_active {
+        ACTIVE_BORDER_COLOR
+    } else {
+        Color::White
+    };
+
+    let mut title_spans = vec![Span::styled(
+        config.title,
+        Style::default()
+            .fg(title_color)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    if config.is_required {
+        title_spans.push(Span::styled(
+            " *",
+            Style::default()
+                .fg(REQUIRED_COLOR)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    if let Some(hint) = config.hint {
+        title_spans.push(Span::styled(
+            format!(" ({})", hint),
+            Style::default().fg(title_color),
+        ));
+    }
+
+    let display_value = if config.value.is_empty() && !config.is_active {
+        config.placeholder
+    } else {
+        config.value
+    };
+
+    let value_style = if config.value.is_empty() && !config.is_active {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let widget = Paragraph::new(display_value).style(value_style).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border_color))
+            .title(Line::from(title_spans)),
+    );
+
+    frame.render_widget(widget, area);
+
+    // Return cursor position
+    if config.is_active {
+        Some((area.x + 1 + config.value.width() as u16, area.y + 1))
+    } else {
+        None
+    }
+}
+
+fn render_checkbox(frame: &mut Frame, area: Rect, config: CheckboxConfig) {
+    let border_color = if config.is_active {
+        ACTIVE_BORDER_COLOR
+    } else {
+        INACTIVE_BORDER_COLOR
+    };
+
+    let title_color = if config.is_active {
+        ACTIVE_BORDER_COLOR
+    } else {
+        Color::White
+    };
+
+    let title_span = Line::from(vec![Span::styled(
+        config.title,
+        Style::default()
+            .fg(title_color)
+            .add_modifier(Modifier::BOLD),
+    )]);
+
+    let check_display = if config.checked {
+        Line::from(vec![
+            Span::styled(
+                "✓ ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("Enabled", Style::default().fg(Color::Green)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("○ ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Disabled", Style::default().fg(Color::DarkGray)),
+        ])
+    };
+
+    let widget = Paragraph::new(check_display).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border_color))
+            .title(title_span),
+    );
+
+    frame.render_widget(widget, area);
+}
 
 pub fn render_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.connection_form.editing_connection_id.is_some() {
@@ -36,7 +171,7 @@ pub fn render_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let _ = render_mode_tabs(frame, app, inner_area);
 
-    // 渲染表单字段
+    // Rendering form fields
     let form_area = Rect {
         x: inner_area.x,
         y: inner_area.y + 2,
@@ -46,7 +181,7 @@ pub fn render_connection_form(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let cursor_pos = render_form_fields(frame, app, form_area);
 
-    // 设置光标位置
+    // Set cursor position
     if let Some((x, y)) = cursor_pos {
         frame.set_cursor_position(ratatui::layout::Position { x, y });
     }

@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::app::{App, CurrentScreen};
-use crate::ui::utils::format_memory;
+use crate::ui::{cli, dashboard, dialogs, file_selector, form, utils};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
@@ -34,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
         let popup_area = centered_rect_fixed_height(60, form_height, size);
         frame.render_widget(Clear, popup_area);
-        crate::ui::form::render_connection_form(frame, app, popup_area);
+        form::render_connection_form(frame, app, popup_area);
     }
 
     // Connection switcher overlay
@@ -45,21 +45,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let popup_width = 70;
         let popup_area = centered_rect_fixed_height(popup_width, popup_height, size);
         frame.render_widget(Clear, popup_area);
-        crate::ui::dialogs::render_connection_switcher(frame, app, popup_area);
+        dialogs::render_connection_switcher(frame, app, popup_area);
     }
 
     // Delete confirmation dialog
     if app.is_delete_confirmation_open {
         let popup_area = centered_rect_fixed_height(60, 8, size);
         frame.render_widget(Clear, popup_area);
-        crate::ui::dialogs::render_delete_confirmation(frame, app, popup_area);
+        dialogs::render_delete_confirmation(frame, app, popup_area);
     }
 
     // Progress dialog
     if app.progress_dialog.is_some() {
         let popup_area = centered_rect_fixed_height(60, 8, size);
         frame.render_widget(Clear, popup_area);
-        crate::ui::dialogs::render_progress_dialog(frame, app, popup_area);
+        dialogs::render_progress_dialog(frame, app, popup_area);
     }
 }
 
@@ -88,7 +88,7 @@ fn render_header(frame: &mut Frame, app: &mut App, area: Rect) {
     } else if let Some(conn_name) = &app.current_connection_name {
         if let Some(info) = &app.server_info {
             let uptime = format_uptime(info.uptime_seconds);
-            let memory = format_memory(info.used_memory);
+            let memory = utils::format_memory(info.used_memory);
             header_spans.extend(vec![
                 Span::styled("Connection: ", Style::default().fg(Color::Gray)),
                 Span::styled(
@@ -184,10 +184,10 @@ fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
         render_connection_list(frame, app, chunks[0]);
         render_connection_content(frame, app, chunks[1]);
     } else if app.current_screen == CurrentScreen::FileSelector {
-        crate::ui::file_selector::render_file_selector(frame, app, area);
+        file_selector::render_file_selector(frame, app, area);
     } else {
-        crate::ui::dashboard::render_key_sidebar(frame, app, chunks[0]);
-        render_content_with_command(frame, app, chunks[1]);
+        dashboard::render_key_sidebar(frame, app, chunks[0]);
+        render_content_area(frame, app, chunks[1]);
     }
 }
 
@@ -219,18 +219,13 @@ fn render_connection_content(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_content_with_command(frame: &mut Frame, app: &mut App, area: Rect) {
-    // Render content area directly (command input is integrated inside)
-    render_content_area(frame, app, area);
-}
-
 fn render_content_area(frame: &mut Frame, app: &mut App, area: Rect) {
     // If there's command output or in command mode, show CLI interface
     let show_cli_interface =
         !app.command_output.is_empty() || app.current_screen == CurrentScreen::CommandMode;
 
     if show_cli_interface {
-        crate::ui::cli::render_cli_ui(frame, app, area);
+        cli::render_cli_ui(frame, app, area);
         return;
     }
 
