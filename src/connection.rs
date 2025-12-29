@@ -540,7 +540,7 @@ impl ConnectionForm {
 
     fn parse_cluster_nodes(input: &str, form: &mut Self, _scheme: &str) {
         // Extract auth info if present
-        let (_auth, nodes_part) = if let Some(idx) = input.rfind('@') {
+        let nodes_part = if let Some(idx) = input.rfind('@') {
             let auth_part = &input[..idx];
             if let Some(colon_idx) = auth_part.find(':') {
                 form.username = Some(auth_part[..colon_idx].to_string());
@@ -548,23 +548,22 @@ impl ConnectionForm {
             } else {
                 form.password = Some(auth_part.to_string());
             }
-            (Some(auth_part), &input[idx + 1..])
+            &input[idx + 1..]
         } else {
-            (None, input)
+            input
         };
 
         // Parse multiple nodes separated by comma
-        let nodes: Vec<String> = nodes_part
+        let nodes: Vec<&str> = nodes_part
             .split(',')
             .map(|node| {
                 let node = node.trim();
                 // Remove any path or query string
-                let node = if let Some(idx) = node.find('/') {
+                if let Some(idx) = node.find('/') {
                     &node[..idx]
                 } else {
                     node
-                };
-                node.to_string()
+                }
             })
             .filter(|s| !s.is_empty())
             .collect();

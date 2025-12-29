@@ -322,13 +322,13 @@ impl App {
                     (val, false)
                 };
 
-                self.current_value = content.clone();
                 self.is_json_content = is_json;
                 self.command_output.clear();
                 self.error_message = None;
 
                 // Load content into editor
                 self.editor_state = EditorState::new(Lines::from(content.as_str()));
+                self.current_value = content;
 
                 if switch_screen {
                     self.current_screen = CurrentScreen::KeyContent;
