@@ -7,8 +7,6 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::connection::FormField;
-
 pub const ACTIVE_BORDER_COLOR: Color = Color::Rgb(147, 112, 219);
 pub const INACTIVE_BORDER_COLOR: Color = Color::Rgb(80, 90, 110);
 pub const REQUIRED_COLOR: Color = Color::LightRed;
@@ -146,20 +144,4 @@ pub fn render_checkbox(frame: &mut Frame, area: Rect, config: CheckboxConfig) {
     );
 
     frame.render_widget(widget, area);
-}
-
-/// Get the value reference of the field
-#[allow(dead_code)]
-pub fn get_field_value(form: &crate::connection::ConnectionForm, field: FormField) -> &str {
-    match field {
-        FormField::Name => &form.name,
-        FormField::Host => &form.host,
-        FormField::Port => &form.port,
-        FormField::Username => form.username.as_deref().unwrap_or(""),
-        FormField::Password => form.password.as_deref().unwrap_or(""),
-        FormField::Sni => &form.sni,
-        FormField::ClusterNodes => &form.cluster_nodes,
-        FormField::DbAliases => &form.db_aliases,
-        FormField::UseTls | FormField::AllowInsecureTls => "",
-    }
 }
