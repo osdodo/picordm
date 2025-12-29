@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         } else {
             27
         };
-        let popup_area = centered_rect_fixed_height(60, form_height, size);
+        let popup_area = utils::centered_rect_fixed_height(60, form_height, size);
         frame.render_widget(Clear, popup_area);
         form::render_connection_form(frame, app, popup_area);
     }
@@ -43,21 +43,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let list_height = (connections.len() as u16).min(12);
         let popup_height = list_height + 5;
         let popup_width = 70;
-        let popup_area = centered_rect_fixed_height(popup_width, popup_height, size);
+        let popup_area = utils::centered_rect_fixed_height(popup_width, popup_height, size);
         frame.render_widget(Clear, popup_area);
         dialogs::render_connection_switcher(frame, app, popup_area);
     }
 
     // Delete confirmation dialog
     if app.is_delete_confirmation_open {
-        let popup_area = centered_rect_fixed_height(60, 8, size);
+        let popup_area = utils::centered_rect_fixed_height(60, 8, size);
         frame.render_widget(Clear, popup_area);
         dialogs::render_delete_confirmation(frame, app, popup_area);
     }
 
     // Progress dialog
     if app.progress_dialog.is_some() {
-        let popup_area = centered_rect_fixed_height(60, 8, size);
+        let popup_area = utils::centered_rect_fixed_height(60, 8, size);
         frame.render_widget(Clear, popup_area);
         dialogs::render_progress_dialog(frame, app, popup_area);
     }
@@ -438,24 +438,4 @@ fn render_footer(frame: &mut Frame, app: &mut App, area: Rect) {
                 .border_style(Style::default().fg(Color::Rgb(80, 90, 110))),
         );
     frame.render_widget(paragraph, area);
-}
-
-fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(height),
-            Constraint::Min(0),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
