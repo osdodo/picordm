@@ -137,19 +137,35 @@ impl RedisService {
         }
     }
 
+    // Execute a SELECT statement in Standalone mode, and then perform the operation.
+    async fn with_db<T, F, Fut>(&self, db_index: u32, f: F) -> Result<T>
+    where
+        F: Fn(ConnectionType) -> Fut,
+        Fut: Future<Output = Result<T>>,
+        T: Send + 'static,
+    {
+        self.execute_retry(|conn| async {
+            match conn {
+                ConnectionType::Standalone(mut c) => {
+                    redis::cmd("SELECT")
+                        .arg(db_index)
+                        .query_async::<()>(&mut c)
+                        .await?;
+                    f(ConnectionType::Standalone(c)).await
+                }
+                ConnectionType::Cluster(c) => f(ConnectionType::Cluster(c)).await,
+            }
+        })
+        .await
+    }
+
     pub async fn get_keys(&self, pattern: &str, db_index: u32) -> Result<Vec<String>> {
         let pattern = pattern.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let pattern = pattern.clone();
             async move {
                 match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
-                        Ok(c.keys(pattern).await?)
-                    }
+                    ConnectionType::Standalone(mut c) => Ok(c.keys(pattern).await?),
                     ConnectionType::Cluster(mut c) => Ok(c.keys(pattern).await?),
                 }
             }
@@ -159,15 +175,11 @@ impl RedisService {
 
     pub async fn get_type(&self, key: &str, db_index: u32) -> Result<String> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         Ok(redis::cmd("TYPE").arg(key).query_async(&mut c).await?)
                     }
                     ConnectionType::Cluster(mut c) => {
@@ -183,16 +195,12 @@ impl RedisService {
         let key_type = self.get_type(key, db_index).await?;
         let key_owned = key.to_string();
 
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key_owned.clone();
             let key_type = key_type.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         get_value_by_type(&mut c, &key, &key_type).await
                     }
                     ConnectionType::Cluster(mut c) => {
@@ -295,16 +303,12 @@ impl RedisService {
     pub async fn set_value(&self, key: &str, value: &str, db_index: u32) -> Result<()> {
         let key = key.to_string();
         let value = value.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             let value = value.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = c.set(&key, &value).await?;
                         Ok(())
                     }
@@ -320,15 +324,11 @@ impl RedisService {
 
     pub async fn delete_key(&self, key: &str, db_index: u32) -> Result<()> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: u32 = c.del(&key).await?;
                         Ok(())
                     }
@@ -349,43 +349,22 @@ impl RedisService {
 
         let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let args = args_owned.clone();
             async move {
-                match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
+                let mut cmd = redis::cmd(&args[0]);
+                for arg in &args[1..] {
+                    cmd.arg(arg);
+                }
 
-                        let mut cmd = redis::cmd(&args[0]);
-                        for arg in &args[1..] {
-                            cmd.arg(arg);
-                        }
+                let result: redis::RedisResult<redis::Value> = match conn {
+                    ConnectionType::Standalone(mut c) => cmd.query_async(&mut c).await,
+                    ConnectionType::Cluster(mut c) => cmd.query_async(&mut c).await,
+                };
 
-                        let result: redis::RedisResult<redis::Value> =
-                            cmd.query_async(&mut c).await;
-
-                        match result {
-                            Ok(value) => Ok(format_redis_value(&value)),
-                            Err(e) => Err(anyhow::anyhow!("{}", e)),
-                        }
-                    }
-                    ConnectionType::Cluster(mut c) => {
-                        let mut cmd = redis::cmd(&args[0]);
-                        for arg in &args[1..] {
-                            cmd.arg(arg);
-                        }
-
-                        let result: redis::RedisResult<redis::Value> =
-                            cmd.query_async(&mut c).await;
-
-                        match result {
-                            Ok(value) => Ok(format_redis_value(&value)),
-                            Err(e) => Err(anyhow::anyhow!("{}", e)),
-                        }
-                    }
+                match result {
+                    Ok(value) => Ok(format_redis_value(&value)),
+                    Err(e) => Err(anyhow::anyhow!("{}", e)),
                 }
             }
         })
@@ -394,15 +373,11 @@ impl RedisService {
 
     pub async fn get_key_ttl(&self, key: &str, db_index: u32) -> Result<i64> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         Ok(redis::cmd("TTL").arg(key).query_async(&mut c).await?)
                     }
                     ConnectionType::Cluster(mut c) => {
@@ -416,23 +391,18 @@ impl RedisService {
 
     pub async fn key_exists(&self, key: &str, db_index: u32) -> Result<bool> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
-                match conn {
+                let exists: i32 = match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
-                        let exists: i32 = redis::cmd("EXISTS").arg(key).query_async(&mut c).await?;
-                        Ok(exists > 0)
+                        redis::cmd("EXISTS").arg(key).query_async(&mut c).await?
                     }
                     ConnectionType::Cluster(mut c) => {
-                        let exists: i32 = redis::cmd("EXISTS").arg(key).query_async(&mut c).await?;
-                        Ok(exists > 0)
+                        redis::cmd("EXISTS").arg(key).query_async(&mut c).await?
                     }
-                }
+                };
+                Ok(exists > 0)
             }
         })
         .await
@@ -440,15 +410,11 @@ impl RedisService {
 
     pub async fn set_key_ttl(&self, key: &str, ttl: i64, db_index: u32) -> Result<()> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = redis::cmd("EXPIRE")
                             .arg(key)
                             .arg(ttl)
@@ -473,17 +439,11 @@ impl RedisService {
     // Type-specific getters for export
     pub async fn get_list_values(&self, key: &str, db_index: u32) -> Result<Vec<String>> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
-                        Ok(c.lrange(&key, 0, -1).await?)
-                    }
+                    ConnectionType::Standalone(mut c) => Ok(c.lrange(&key, 0, -1).await?),
                     ConnectionType::Cluster(mut c) => Ok(c.lrange(&key, 0, -1).await?),
                 }
             }
@@ -493,17 +453,11 @@ impl RedisService {
 
     pub async fn get_set_values(&self, key: &str, db_index: u32) -> Result<Vec<String>> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
-                        Ok(c.smembers(&key).await?)
-                    }
+                    ConnectionType::Standalone(mut c) => Ok(c.smembers(&key).await?),
                     ConnectionType::Cluster(mut c) => Ok(c.smembers(&key).await?),
                 }
             }
@@ -513,15 +467,11 @@ impl RedisService {
 
     pub async fn get_zset_values(&self, key: &str, db_index: u32) -> Result<Vec<(String, f64)>> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         Ok(c.zrange_withscores(&key, 0, -1).await?)
                     }
                     ConnectionType::Cluster(mut c) => Ok(c.zrange_withscores(&key, 0, -1).await?),
@@ -537,17 +487,11 @@ impl RedisService {
         db_index: u32,
     ) -> Result<std::collections::HashMap<String, String>> {
         let key = key.to_string();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             async move {
                 match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
-                        Ok(c.hgetall(&key).await?)
-                    }
+                    ConnectionType::Standalone(mut c) => Ok(c.hgetall(&key).await?),
                     ConnectionType::Cluster(mut c) => Ok(c.hgetall(&key).await?),
                 }
             }
@@ -559,16 +503,12 @@ impl RedisService {
     pub async fn set_list_values(&self, key: &str, values: &[String], db_index: u32) -> Result<()> {
         let key = key.to_string();
         let values = values.to_vec();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             let values = values.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = c.del(&key).await?;
                         if !values.is_empty() {
                             let _: usize = c.lpush(&key, &values).await?;
@@ -591,16 +531,12 @@ impl RedisService {
     pub async fn set_set_values(&self, key: &str, values: &[String], db_index: u32) -> Result<()> {
         let key = key.to_string();
         let values = values.to_vec();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             let values = values.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = c.del(&key).await?;
                         if !values.is_empty() {
                             let _: usize = c.sadd(&key, &values).await?;
@@ -628,26 +564,22 @@ impl RedisService {
     ) -> Result<()> {
         let key = key.to_string();
         let values = values.to_vec();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             let values = values.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = c.del(&key).await?;
-                        for (member, score) in values {
-                            let _: usize = c.zadd(&key, &member, score).await?;
+                        for (member, score) in &values {
+                            let _: usize = c.zadd(&key, member, *score).await?;
                         }
                         Ok(())
                     }
                     ConnectionType::Cluster(mut c) => {
                         let _: () = c.del(&key).await?;
-                        for (member, score) in values {
-                            let _: usize = c.zadd(&key, &member, score).await?;
+                        for (member, score) in &values {
+                            let _: usize = c.zadd(&key, member, *score).await?;
                         }
                         Ok(())
                     }
@@ -665,16 +597,12 @@ impl RedisService {
     ) -> Result<()> {
         let key = key.to_string();
         let values = values.to_vec();
-        self.execute_retry(move |conn| {
+        self.with_db(db_index, |conn| {
             let key = key.clone();
             let values = values.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        redis::cmd("SELECT")
-                            .arg(db_index)
-                            .query_async::<()>(&mut c)
-                            .await?;
                         let _: () = c.del(&key).await?;
                         if !values.is_empty() {
                             let _: () = c.hset_multiple(&key, &values).await?;

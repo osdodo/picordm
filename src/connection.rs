@@ -205,45 +205,35 @@ impl Default for ConnectionForm {
 
 impl ConnectionForm {
     pub fn next_field(&mut self) {
-        self.editing_field = match self.editing_field {
-            FormField::Name => {
-                if self.is_cluster {
-                    FormField::ClusterNodes
-                } else {
-                    FormField::Host
-                }
-            }
-            FormField::Host => FormField::Port,
-            FormField::Port => FormField::Username,
-            FormField::ClusterNodes => FormField::Username,
-            FormField::Username => FormField::Password,
-            FormField::Password => FormField::UseTls,
-            FormField::UseTls => FormField::AllowInsecureTls,
-            FormField::AllowInsecureTls => FormField::Sni,
-            FormField::Sni => FormField::DbAliases,
-            FormField::DbAliases => FormField::Name, // Loop back to start
-        };
+        let fields = self.get_field_order();
+        if let Some(pos) = fields.iter().position(|&f| f == self.editing_field) {
+            self.editing_field = fields[(pos + 1) % fields.len()];
+        }
     }
 
     pub fn previous_field(&mut self) {
-        self.editing_field = match self.editing_field {
-            FormField::Name => FormField::DbAliases, // Loop back to end
-            FormField::Host => FormField::Name,
-            FormField::Port => FormField::Host,
-            FormField::ClusterNodes => FormField::Name,
-            FormField::Username => {
-                if self.is_cluster {
-                    FormField::ClusterNodes
-                } else {
-                    FormField::Port
-                }
-            }
-            FormField::Password => FormField::Username,
-            FormField::UseTls => FormField::Password,
-            FormField::AllowInsecureTls => FormField::UseTls,
-            FormField::Sni => FormField::AllowInsecureTls,
-            FormField::DbAliases => FormField::Sni,
-        };
+        let fields = self.get_field_order();
+        if let Some(pos) = fields.iter().position(|&f| f == self.editing_field) {
+            self.editing_field = fields[(pos + fields.len() - 1) % fields.len()];
+        }
+    }
+
+    fn get_field_order(&self) -> Vec<FormField> {
+        let mut fields = vec![FormField::Name];
+        if self.is_cluster {
+            fields.push(FormField::ClusterNodes);
+        } else {
+            fields.extend([FormField::Host, FormField::Port]);
+        }
+        fields.extend([
+            FormField::Username,
+            FormField::Password,
+            FormField::UseTls,
+            FormField::AllowInsecureTls,
+            FormField::Sni,
+            FormField::DbAliases,
+        ]);
+        fields
     }
 
     pub fn validate(&mut self) -> bool {
