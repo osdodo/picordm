@@ -3,8 +3,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-use crate::config::{APP_NAME, CONFIG_FILE_NAME};
-use crate::connection::ConnectionConfig;
+use crate::models::ConnectionConfig;
+
+pub const APP_NAME: &str = "picordm";
+pub const CONFIG_FILE_NAME: &str = "picordm_connections.json";
 
 fn get_config_path() -> Result<PathBuf> {
     // macOS: ~/Library/Application Support/picordm/

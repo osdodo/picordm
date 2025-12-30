@@ -1,11 +1,14 @@
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
-use redis::aio::MultiplexedConnection;
-use redis::cluster_async::ClusterConnection;
-use redis::{AsyncCommands, Client, cluster::ClusterClient};
+use redis::{
+    AsyncCommands, Client, aio::MultiplexedConnection, cluster::ClusterClient,
+    cluster_async::ClusterConnection,
+};
 use tokio::sync::RwLock;
+
+use crate::models::{ConnectionConfig, DbInfo, ServerInfo};
 
 #[derive(Clone)]
 pub struct RedisService {
@@ -30,20 +33,6 @@ enum ConnectionType {
     Cluster(ClusterConnection),
 }
 
-#[derive(Debug, Clone)]
-pub struct ServerInfo {
-    pub uptime_seconds: u64,
-    pub connected_clients: u32,
-    pub total_keys: u64,
-    pub used_memory: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct DbInfo {
-    pub index: u32,
-    pub keys_count: u64,
-}
-
 impl RedisService {
     pub fn new() -> Self {
         Self {
@@ -51,7 +40,64 @@ impl RedisService {
         }
     }
 
-    pub async fn connect(&self, url: &str) -> Result<()> {
+    pub async fn connect(&self, config: &ConnectionConfig) -> Result<()> {
+        if config.is_cluster {
+            // Cluster mode
+            let mut nodes = Vec::new();
+            for node in &config.cluster_nodes {
+                let mut url = if config.use_tls {
+                    "rediss://".to_string()
+                } else {
+                    "redis://".to_string()
+                };
+
+                if let Some(pass) = &config.password
+                    && !pass.is_empty()
+                {
+                    if let Some(user) = &config.username
+                        && !user.is_empty()
+                    {
+                        url.push_str(user);
+                    }
+                    url.push(':');
+                    url.push_str(pass);
+                    url.push('@');
+                }
+
+                url.push_str(node);
+                nodes.push(url);
+            }
+            self.connect_cluster(nodes).await
+        } else {
+            // Standalone mode
+            let mut url = if config.use_tls {
+                "rediss://".to_string()
+            } else {
+                "redis://".to_string()
+            };
+
+            if let Some(pass) = &config.password
+                && !pass.is_empty()
+            {
+                if let Some(user) = &config.username
+                    && !user.is_empty()
+                {
+                    url.push_str(user);
+                }
+                url.push(':');
+                url.push_str(pass);
+                url.push('@');
+            }
+
+            url.push_str(&config.host);
+            url.push(':');
+            url.push_str(&config.port.to_string());
+
+            self.connect_url(&url).await
+        }
+    }
+
+    pub async fn connect_url(&self, url: &str) -> Result<()> {
         let client = Client::open(url)?;
         let connection = client.get_multiplexed_async_connection().await?;
         let mut state = self.state.write().await;
@@ -115,7 +161,7 @@ impl RedisService {
                     match &*state {
                         ServiceState::Standalone { current_url, .. } => {
                             if let Some(url) = current_url {
-                                let _ = self.connect(url).await;
+                                let _ = self.connect_url(url).await;
                                 if let Ok(new_conn) = self.get_conn().await {
                                     return f(new_conn).await;
                                 }
@@ -275,25 +321,6 @@ impl RedisService {
                     };
 
                     parse_server_info(&info_str)
-                }
-            }
-        })
-        .await
-    }
-
-    pub async fn select_db(&self, db_index: u32) -> Result<()> {
-        self.execute_retry(move |conn| async move {
-            match conn {
-                ConnectionType::Standalone(mut c) => {
-                    redis::cmd("SELECT")
-                        .arg(db_index)
-                        .query_async::<()>(&mut c)
-                        .await?;
-                    Ok(())
-                }
-                ConnectionType::Cluster(_) => {
-                    // Cluster mode doesn't support SELECT
-                    Ok(())
                 }
             }
         })
@@ -793,4 +820,10 @@ fn parse_server_info(info: &str) -> Result<(ServerInfo, Vec<DbInfo>)> {
         },
         db_list,
     ))
+}
+
+static REDIS_SERVICE: OnceLock<RedisService> = OnceLock::new();
+
+pub fn get_redis_service() -> &'static RedisService {
+    REDIS_SERVICE.get_or_init(RedisService::new)
 }

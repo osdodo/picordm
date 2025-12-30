@@ -1,0 +1,277 @@
+use std::collections::HashSet;
+
+use ratatui::{
+    Frame,
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+};
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Next,
+    Previous,
+    Select,
+    ToggleSelection,
+    SelectAll,
+}
+
+pub struct KeyList {
+    pub keys: Vec<String>,
+    pub state: ListState,
+    pub selected_keys: HashSet<String>,
+    pub filter: String,
+    pub is_loading: bool,
+}
+
+impl KeyList {
+    pub fn new() -> Self {
+        let mut state = ListState::default();
+        state.select(Some(0));
+        Self {
+            keys: Vec::new(),
+            state,
+            selected_keys: HashSet::new(),
+            filter: String::new(),
+            is_loading: false,
+        }
+    }
+
+    pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('j') | KeyCode::Down, _) => Some(Message::Next),
+            (KeyCode::Char('k') | KeyCode::Up, _) => Some(Message::Previous),
+            (KeyCode::Enter, _) => Some(Message::Select),
+            (KeyCode::Char(' '), _) => Some(Message::ToggleSelection),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => Some(Message::SelectAll),
+            _ => None,
+        }
+    }
+
+    pub fn update(&mut self, msg: Message) -> Option<String> {
+        match msg {
+            Message::Next => {
+                self.next();
+                None
+            }
+            Message::Previous => {
+                self.previous();
+                None
+            }
+            Message::Select => self.selected_key().cloned(),
+            Message::ToggleSelection => {
+                self.toggle_selection();
+                None
+            }
+            Message::SelectAll => {
+                self.select_all();
+                None
+            }
+        }
+    }
+
+    pub fn view(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        let border_color = if is_focused {
+            Color::Rgb(147, 112, 219)
+        } else {
+            Color::Rgb(80, 90, 110)
+        };
+
+        if self.is_loading {
+            let loading_text = Span::styled("Loading keys...", Style::default().fg(Color::Yellow));
+            let loading_widget = Paragraph::new(loading_text)
+                .alignment(ratatui::layout::Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(border_color))
+                        .title(Span::styled(
+                            "Keys",
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        )),
+                );
+            frame.render_widget(loading_widget, area);
+            return;
+        }
+
+        let filtered_keys = self.get_filtered_keys();
+        let items: Vec<ListItem> = filtered_keys
+            .iter()
+            .map(|key| {
+                let is_selected = self.selected_keys.contains(key);
+                let checkbox = if is_selected {
+                    Span::styled(
+                        "[✓] ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
+                };
+
+                let key_style = if is_selected {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                ListItem::new(Line::from(vec![checkbox, Span::styled(key, key_style)]))
+            })
+            .collect();
+
+        let selected_count = self.selected_keys.len();
+        let keys_title = if selected_count > 0 {
+            format!(
+                "Keys ({}) - {} selected",
+                filtered_keys.len(),
+                selected_count
+            )
+        } else {
+            format!("Keys ({})", filtered_keys.len())
+        };
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        keys_title,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(34, 36, 64))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+
+        frame.render_stateful_widget(list, area, &mut self.state);
+    }
+
+    pub fn get_filtered_keys(&self) -> Vec<String> {
+        if self.filter.is_empty() {
+            self.keys.clone()
+        } else {
+            self.keys
+                .iter()
+                .filter(|key| key.to_lowercase().contains(&self.filter.to_lowercase()))
+                .cloned()
+                .collect()
+        }
+    }
+
+    pub fn next(&mut self) {
+        if self.keys.is_empty() {
+            return;
+        }
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.keys.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    pub fn previous(&mut self) {
+        if self.keys.is_empty() {
+            return;
+        }
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.keys.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn selected_key(&self) -> Option<&String> {
+        self.state.selected().and_then(|i| self.keys.get(i))
+    }
+
+    pub fn toggle_selection(&mut self) {
+        if let Some(selected_idx) = self.state.selected() {
+            let filtered_keys = self.get_filtered_keys();
+            if let Some(key) = filtered_keys.get(selected_idx) {
+                if self.selected_keys.contains(key) {
+                    self.selected_keys.remove(key);
+                } else {
+                    self.selected_keys.insert(key.clone());
+                }
+            }
+        }
+    }
+
+    fn select_all(&mut self) {
+        let filtered_keys = self.get_filtered_keys();
+        // Check if all filtered keys are already selected
+        let all_selected = !filtered_keys.is_empty()
+            && filtered_keys.iter().all(|key| self.selected_keys.contains(key));
+        
+        if all_selected {
+            // Deselect all filtered keys
+            for key in &filtered_keys {
+                self.selected_keys.remove(key);
+            }
+        } else {
+            // Select all filtered keys
+            for key in filtered_keys {
+                self.selected_keys.insert(key);
+            }
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_keys.clear();
+    }
+
+    pub fn update_filter(&mut self, pattern: &str) {
+        self.filter = pattern.to_string();
+    }
+
+    pub fn get_selected_key(&self) -> Option<String> {
+        self.state
+            .selected()
+            .and_then(|i| self.get_filtered_keys().get(i).cloned())
+    }
+
+    pub fn get_selected_keys(&self) -> Vec<String> {
+        if self.selected_keys.is_empty() {
+            self.get_selected_key().into_iter().collect()
+        } else {
+            self.selected_keys.iter().cloned().collect()
+        }
+    }
+
+    pub fn update_keys(&mut self, keys: Vec<String>) {
+        self.keys = keys;
+        self.selected_keys.clear();
+        self.is_loading = false;
+        if !self.get_filtered_keys().is_empty() {
+            self.state.select(Some(0));
+        } else {
+            self.state.select(None);
+        }
+    }
+}

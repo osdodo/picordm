@@ -8,21 +8,22 @@
 
 ## Dashboard Mode
 
-| Key      | Function             |
-| -------- | -------------------- |
-| `↑↓`     | Select key           |
-| `Enter`  | Open selected key    |
-| `Space`  | Toggle key selection |
-| `Ctrl+a` | Select all           |
-| `/`      | Search keys          |
-| `>`      | Enter command mode   |
-| `Ctrl+n` | Switch database      |
-| `F5`     | Refresh              |
-| `Ctrl+e` | Export               |
-| `Ctrl+l` | Import               |
-| `Ctrl+t` | Switch connection    |
-| `Ctrl+b` | Disconnect           |
-| `Delete` | Delete selected keys |
+| Key      | Function                 |
+| -------- | ------------------------ |
+| `↑↓`     | Select key               |
+| `Enter`  | Open selected key        |
+| `Space`  | Toggle key selection     |
+| `Ctrl+a` | Select all/Cancel        |
+| `/`      | Search keys              |
+| `>`      | Enter command mode       |
+| `Ctrl+n` | Switch database          |
+| `Ctrl+r` | Refresh key list         |
+| `F5`     | Refresh server stats     |
+| `Ctrl+e` | Export                   |
+| `Ctrl+l` | Import                   |
+| `Ctrl+t` | Switch connection        |
+| `Ctrl+b` | Disconnect               |
+| `Delete` | Delete selected keys     |
 
 ## KeyContent Mode (Vim-style)
 
@@ -100,6 +101,40 @@ Command mode supports two focus states, use `Tab` key to switch between input an
 - In browse mode, press `v` to enter Visual mode for text selection, then `y` to copy
 - In Visual or Insert mode, the first `Esc` exits that mode back to Normal mode, press `Esc` again to exit Command Mode
 - Press `Tab` anytime to return to input mode for entering more commands
+
+## Quick Connection Switch
+
+Press `Ctrl+t` from Dashboard to open the Quick Connection Switch dialog:
+
+### Navigation Mode (Default)
+
+| Key      | Function                    |
+| -------- | --------------------------- |
+| `↑↓`     | Navigate connections        |
+| `j`/`k`  | Navigate connections        |
+| `1-9`    | Quick select (first 9)      |
+| `/`      | Enter search mode           |
+| `Enter`  | Switch to selected          |
+| `Esc`    | Close dialog                 |
+
+### Search Mode
+
+Press `/` to enter search mode:
+
+| Key         | Function                    |
+| ----------- | --------------------------- |
+| Type text   | Filter connections          |
+| `↑↓`        | Navigate filtered results   |
+| `Backspace` | Clear search text           |
+| `Enter`     | Switch to selected          |
+| `Esc`       | Exit search mode            |
+
+**Tips**:
+- Press `/` to activate search mode before typing
+- Search matches connection name and host
+- First matching result is auto-selected
+- Press `Esc` in search mode to return to navigation mode
+- Press `Esc` again to close the dialog
 
 ## Common Workflows
 

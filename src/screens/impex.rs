@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::service::RedisService;
+use crate::service::get_redis_service;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RedisExportData {
@@ -16,7 +16,6 @@ pub struct RedisExportData {
     pub keys: HashMap<String, RedisKeyData>,
 }
 
-// Flexible import structure - only requires keys
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RedisImportData {
     #[serde(default)]
@@ -44,7 +43,6 @@ impl RedisExportData {
 }
 
 pub async fn export_redis_data(
-    redis: &RedisService,
     connection_name: String,
     database: u32,
     keys: &[String],
@@ -54,7 +52,7 @@ pub async fn export_redis_data(
     let mut exported_count = 0;
 
     for key in keys {
-        match export_redis_key(redis, key, database).await {
+        match export_redis_key(key, database).await {
             Ok(key_data) => {
                 export_data.keys.insert(key.clone(), key_data);
                 exported_count += 1;
@@ -74,14 +72,10 @@ pub async fn export_redis_data(
     Ok(exported_count)
 }
 
-async fn export_redis_key(redis: &RedisService, key: &str, database: u32) -> Result<RedisKeyData> {
-    // Get key type
+async fn export_redis_key(key: &str, database: u32) -> Result<RedisKeyData> {
+    let redis = get_redis_service();
     let key_type = redis.get_type(key, database).await?;
-
-    // Get TTL
     let ttl = redis.get_key_ttl(key, database).await.ok();
-
-    // Get value based on type
     let value = match key_type.as_str() {
         "string" => {
             let val = redis.get_value(key, database).await?;
@@ -134,11 +128,11 @@ async fn export_redis_key(redis: &RedisService, key: &str, database: u32) -> Res
 }
 
 pub async fn import_redis_data(
-    redis: &RedisService,
     file_path: &Path,
     database: u32,
     overwrite: bool,
 ) -> Result<(usize, usize)> {
+    let redis = get_redis_service();
     let content = fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read Redis import file: {:?}", file_path))?;
 
@@ -174,7 +168,7 @@ pub async fn import_redis_data(
             continue;
         }
 
-        match import_redis_key(redis, &key, &key_data, target_database).await {
+        match import_redis_key(&key, &key_data, target_database).await {
             Ok(_) => {
                 imported_count += 1;
 
@@ -195,12 +189,8 @@ pub async fn import_redis_data(
     Ok((imported_count, skipped_count))
 }
 
-async fn import_redis_key(
-    redis: &RedisService,
-    key: &str,
-    key_data: &RedisKeyData,
-    database: u32,
-) -> Result<()> {
+async fn import_redis_key(key: &str, key_data: &RedisKeyData, database: u32) -> Result<()> {
+    let redis = get_redis_service();
     match key_data.key_type.as_str() {
         "string" => {
             if let serde_json::Value::String(val) = &key_data.value {
