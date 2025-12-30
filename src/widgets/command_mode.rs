@@ -19,11 +19,6 @@ pub enum Message {
     EditorKeyEvent(KeyEvent),
 }
 
-#[derive(Debug, Clone)]
-pub enum Action {
-    None,
-    ExecuteCommand { command: String },
-}
 
 pub struct CommandMode {
     pub command_input: String,
@@ -83,30 +78,90 @@ impl CommandMode {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub async fn update(
+        &mut self,
+        msg: Message,
+        db_index: u32,
+        mut update_footer_error: impl FnMut(Option<String>),
+    ) -> Result<()> {
         match msg {
             Message::UpdateInput(input) => {
                 self.command_input = input;
-                Action::None
+                Ok(())
             }
             Message::Execute => {
                 let command = self.command_input.clone();
                 if !command.trim().is_empty() {
-                    Action::ExecuteCommand { command }
-                } else {
-                    Action::None
+                    let parts: Vec<&str> = command.split_whitespace().collect();
+                    if parts.is_empty() {
+                        return Ok(());
+                    }
+
+                    let mut output = match get_redis_service().execute_command(&parts, db_index).await {
+                        Ok(output) => {
+                            update_footer_error(None);
+                            output
+                        }
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            if error_str.contains("broken pipe")
+                                || error_str.contains("Connection refused")
+                                || error_str.contains("Connection reset")
+                            {
+                                update_footer_error(Some(
+                                    "Connection lost, please reconnect".to_string(),
+                                ));
+                            }
+                            format!("(error) {}", error_str)
+                        }
+                    };
+
+                    // Limit output size
+                    const MAX_OUTPUT_SIZE: usize = 500 * 1024;
+                    if output.len() > MAX_OUTPUT_SIZE {
+                        let original_len = output.len();
+                        output.truncate(MAX_OUTPUT_SIZE);
+                        output.push_str(&format!(
+                            "\n\n[Output truncated - too large ({} bytes). Use smaller queries or pagination.]",
+                            original_len
+                        ));
+                    }
+
+                    // Check if it is JSON and format it
+                    let trimmed = output.trim();
+                    let (formatted_output, is_json) = if (trimmed.starts_with('{')
+                        && trimmed.ends_with('}'))
+                        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+                    {
+                        match serde_json::from_str::<serde_json::Value>(trimmed) {
+                            Ok(json_value) => {
+                                if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
+                                    (formatted, true)
+                                } else {
+                                    (output, false)
+                                }
+                            }
+                            Err(_) => (output, false),
+                        }
+                    } else {
+                        (output, false)
+                    };
+
+                    self.set_command_output(formatted_output, is_json);
+                    self.clear_command_input();
                 }
+                Ok(())
             }
             Message::ToggleFocus => {
                 if !self.command_output.is_empty() {
                     self.focus_on_output = !self.focus_on_output;
                 }
-                Action::None
+                Ok(())
             }
             Message::EditorKeyEvent(key) => {
                 self.editor_handler
                     .on_key_event(key, &mut self.editor_state);
-                Action::None
+                Ok(())
             }
         }
     }
@@ -238,74 +293,4 @@ impl CommandMode {
         self.editor_state = EditorState::default();
     }
 
-    pub async fn handle_action(
-        &mut self,
-        action: Action,
-        db_index: u32,
-        mut update_footer_error: impl FnMut(Option<String>),
-    ) -> Result<()> {
-        match action {
-            Action::None => Ok(()),
-            Action::ExecuteCommand { command } => {
-                let parts: Vec<&str> = command.split_whitespace().collect();
-                if parts.is_empty() {
-                    return Ok(());
-                }
-
-                let mut output = match get_redis_service().execute_command(&parts, db_index).await {
-                    Ok(output) => {
-                        update_footer_error(None);
-                        output
-                    }
-                    Err(e) => {
-                        let error_str = e.to_string();
-                        if error_str.contains("broken pipe")
-                            || error_str.contains("Connection refused")
-                            || error_str.contains("Connection reset")
-                        {
-                            update_footer_error(Some(
-                                "Connection lost, please reconnect".to_string(),
-                            ));
-                        }
-                        format!("(error) {}", error_str)
-                    }
-                };
-
-                // Limit output size
-                const MAX_OUTPUT_SIZE: usize = 500 * 1024;
-                if output.len() > MAX_OUTPUT_SIZE {
-                    let original_len = output.len();
-                    output.truncate(MAX_OUTPUT_SIZE);
-                    output.push_str(&format!(
-                        "\n\n[Output truncated - too large ({} bytes). Use smaller queries or pagination.]",
-                        original_len
-                    ));
-                }
-
-                // Check if it is JSON and format it
-                let trimmed = output.trim();
-                let (formatted_output, is_json) = if (trimmed.starts_with('{')
-                    && trimmed.ends_with('}'))
-                    || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-                {
-                    match serde_json::from_str::<serde_json::Value>(trimmed) {
-                        Ok(json_value) => {
-                            if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
-                                (formatted, true)
-                            } else {
-                                (output, false)
-                            }
-                        }
-                        Err(_) => (output, false),
-                    }
-                } else {
-                    (output, false)
-                };
-
-                self.set_command_output(formatted_output, is_json);
-                self.clear_command_input();
-                Ok(())
-            }
-        }
-    }
 }

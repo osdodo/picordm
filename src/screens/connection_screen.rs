@@ -17,14 +17,8 @@ pub enum Message {
     QuickImport,
 }
 
-#[derive(Debug, Clone)]
-pub enum Action {
-    None,
-    SwitchScreen(Screen, Box<ConnectionConfig>),
-}
-
 #[derive(Debug)]
-pub enum ActionResult {
+pub enum UpdateResult {
     Continue,
     SwitchScreen(Screen, Box<ConnectionConfig>),
 }
@@ -72,70 +66,68 @@ impl ConnectionScreen {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub async fn update(
+        &mut self,
+        msg: Message,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> anyhow::Result<UpdateResult> {
         match msg {
-            Message::Form(form_msg) => match self.connection_form.update(form_msg) {
-                connection_form::FormAction::Saved(config) => {
-                    self.save_connection(*config);
-                    Action::None
+            Message::Form(form_msg) => {
+                match self.connection_form.update(form_msg) {
+                    connection_form::UpdateResult::Saved(config) => {
+                        self.save_connection(*config);
+                    }
+                    connection_form::UpdateResult::Cancelled => {}
+                    _ => {}
                 }
-                connection_form::FormAction::Cancelled => {
-                    Action::None
+                Ok(UpdateResult::Continue)
+            }
+            Message::List(list_msg) => {
+                match self.connection_list.update(list_msg) {
+                    connection_list::UpdateResult::Selected(config) => {
+                        self.is_connecting = true;
+                        self.footer.update(footer::Message::Error(None));
+                        terminal.draw(|frame| {
+                            let area = frame.area();
+                            self.view(frame, area);
+                        })?;
+
+                        match get_redis_service().connect(&config).await {
+                            Ok(_) => {
+                                self.is_connecting = false;
+                                Ok(UpdateResult::SwitchScreen(
+                                    Screen::Dashboard,
+                                    Box::new(config),
+                                ))
+                            }
+                            Err(e) => {
+                                self.is_connecting = false;
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to connect: {}",
+                                    e
+                                ))));
+                                Ok(UpdateResult::Continue)
+                            }
+                        }
+                    }
+                    connection_list::UpdateResult::Edit(config) => {
+                        self.connection_form.open_edit(&config);
+                        Ok(UpdateResult::Continue)
+                    }
+                    connection_list::UpdateResult::SaveError(error) => {
+                        self.footer.update(footer::Message::Error(Some(error)));
+                        Ok(UpdateResult::Continue)
+                    }
+                    connection_list::UpdateResult::None => Ok(UpdateResult::Continue),
                 }
-                _ => Action::None,
-            },
-            Message::List(list_msg) => match self.connection_list.update(list_msg) {
-                connection_list::Action::Selected(config) => {
-                    Action::SwitchScreen(Screen::Dashboard, Box::new(config))
-                }
-                connection_list::Action::Edit(config) => {
-                    self.connection_form.open_edit(&config);
-                    Action::None
-                }
-                connection_list::Action::SaveError(error) => {
-                    self.footer.update(footer::Message::Error(Some(error)));
-                    Action::None
-                }
-                connection_list::Action::None => Action::None,
-            },
+            }
             Message::OpenNewForm => {
                 self.connection_form.open_new();
-                Action::None
+                Ok(UpdateResult::Continue)
             }
-            Message::QuickImport => self.quick_import_from_clipboard(),
-        }
-    }
-
-    pub async fn handle_action(
-        &mut self,
-        action: Action,
-        terminal: &mut ratatui::DefaultTerminal,
-    ) -> anyhow::Result<ActionResult> {
-        match action {
-            Action::SwitchScreen(screen, config) => {
-                self.is_connecting = true;
-                self.footer.update(footer::Message::Error(None));
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
-                })?;
-
-                match get_redis_service().connect(&config).await {
-                    Ok(_) => {
-                        self.is_connecting = false;
-                        Ok(ActionResult::SwitchScreen(screen, config))
-                    }
-                    Err(e) => {
-                        self.is_connecting = false;
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to connect: {}",
-                            e
-                        ))));
-                        Ok(ActionResult::Continue)
-                    }
-                }
+            Message::QuickImport => {
+                self.quick_import_from_clipboard(terminal).await
             }
-            _ => Ok(ActionResult::Continue),
         }
     }
 
@@ -190,7 +182,10 @@ impl ConnectionScreen {
         }
     }
 
-    fn quick_import_from_clipboard(&mut self) -> Action {
+    async fn quick_import_from_clipboard(
+        &mut self,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> anyhow::Result<UpdateResult> {
         let clipboard_text = match arboard::Clipboard::new() {
             Ok(mut clipboard) => match clipboard.get_text() {
                 Ok(text) => text,
@@ -199,7 +194,7 @@ impl ConnectionScreen {
                         "Failed to read clipboard: {}",
                         e
                     ))));
-                    return Action::None;
+                    return Ok(UpdateResult::Continue);
                 }
             },
             Err(e) => {
@@ -207,7 +202,7 @@ impl ConnectionScreen {
                     "Failed to access clipboard: {}",
                     e
                 ))));
-                return Action::None;
+                return Ok(UpdateResult::Continue);
             }
         };
 
@@ -216,7 +211,7 @@ impl ConnectionScreen {
             self.footer.update(footer::Message::Error(Some(
                 "Clipboard is empty".to_string(),
             )));
-            return Action::None;
+            return Ok(UpdateResult::Continue);
         }
 
         // Parse connection string
@@ -224,7 +219,7 @@ impl ConnectionScreen {
             Ok(form) => form,
             Err(e) => {
                 self.footer.update(footer::Message::Error(Some(e)));
-                return Action::None;
+                return Ok(UpdateResult::Continue);
             }
         };
 
@@ -288,14 +283,37 @@ impl ConnectionScreen {
             Ok(_) => {
                 self.footer.update(footer::Message::Error(None));
                 // Auto-connect after import
-                Action::SwitchScreen(Screen::Dashboard, Box::new(new_conn))
+                self.is_connecting = true;
+                self.footer.update(footer::Message::Error(None));
+                terminal.draw(|frame| {
+                    let area = frame.area();
+                    self.view(frame, area);
+                })?;
+
+                match get_redis_service().connect(&new_conn).await {
+                    Ok(_) => {
+                        self.is_connecting = false;
+                        Ok(UpdateResult::SwitchScreen(
+                            Screen::Dashboard,
+                            Box::new(new_conn),
+                        ))
+                    }
+                    Err(e) => {
+                        self.is_connecting = false;
+                        self.footer.update(footer::Message::Error(Some(format!(
+                            "Failed to connect: {}",
+                            e
+                        ))));
+                        Ok(UpdateResult::Continue)
+                    }
+                }
             }
             Err(e) => {
                 self.footer.update(footer::Message::Error(Some(format!(
                     "Failed to save connection '{}': {}\nConnection was not saved.",
                     new_conn.name, e
                 ))));
-                Action::None
+                Ok(UpdateResult::Continue)
             }
         }
     }

@@ -9,6 +9,20 @@ use ratatui::{
 
 use crate::models::DbInfo;
 
+#[derive(Debug, Clone)]
+pub enum Message {
+    Close,
+    Next,
+    Previous,
+    Select,
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    None,
+    Selected(u32),
+}
+
 pub struct DbSelector {
     pub db_list: Vec<DbInfo>,
     pub current_db_index: u32,
@@ -28,16 +42,47 @@ impl DbSelector {
         }
     }
 
-    pub fn handle_key_events(&self, key: KeyEvent) -> Option<KeyCode> {
+    pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
         if !self.is_open {
             return None;
         }
         match key.code {
-            KeyCode::Esc => Some(KeyCode::Esc),
-            KeyCode::Char('j') | KeyCode::Down => Some(KeyCode::Down),
-            KeyCode::Char('k') | KeyCode::Up => Some(KeyCode::Up),
-            KeyCode::Enter => Some(KeyCode::Enter),
+            KeyCode::Esc => Some(Message::Close),
+            KeyCode::Char('j') | KeyCode::Down => Some(Message::Next),
+            KeyCode::Char('k') | KeyCode::Up => Some(Message::Previous),
+            KeyCode::Enter => Some(Message::Select),
             _ => None,
+        }
+    }
+
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
+        match msg {
+            Message::Close => {
+                self.toggle();
+                UpdateResult::None
+            }
+            Message::Next => {
+                self.next();
+                UpdateResult::None
+            }
+            Message::Previous => {
+                self.previous();
+                UpdateResult::None
+            }
+            Message::Select => {
+                if let Some(selected) = self.state.selected() {
+                    if let Some(db_info) = self.db_list.get(selected) {
+                        let db_index = db_info.index;
+                        self.toggle();
+                        self.current_db_index = db_index;
+                        UpdateResult::Selected(db_index)
+                    } else {
+                        UpdateResult::None
+                    }
+                } else {
+                    UpdateResult::None
+                }
+            }
         }
     }
 

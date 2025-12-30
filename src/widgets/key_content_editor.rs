@@ -19,7 +19,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub enum Action {
+pub enum UpdateResult {
     None,
     Save,
     SaveAndQuit,
@@ -102,38 +102,38 @@ impl KeyContentEditor {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::EditorKeyEvent(key) => {
                 self.editor_handler
                     .on_key_event(key, &mut self.editor_state);
-                Action::None
+                UpdateResult::None
             }
             Message::VimCommandModeToggle => {
                 self.is_vim_command_mode = !self.is_vim_command_mode;
                 if self.is_vim_command_mode {
                     self.vim_command_input.clear();
                 }
-                Action::None
+                UpdateResult::None
             }
             Message::VimCommandModeUpdateInput(input) => {
                 self.vim_command_input = input;
-                Action::None
+                UpdateResult::None
             }
             Message::VimCommandModeExecute => {
                 let cmd = self.vim_command_input.trim();
-                let action = match cmd {
-                    "w" => Action::Save,
-                    "q" => Action::Quit,
-                    "wq" | "x" => Action::SaveAndQuit,
-                    "q!" => Action::Quit,
-                    _ => Action::None,
+                let result = match cmd {
+                    "w" => UpdateResult::Save,
+                    "q" => UpdateResult::Quit,
+                    "wq" | "x" => UpdateResult::SaveAndQuit,
+                    "q!" => UpdateResult::Quit,
+                    _ => UpdateResult::None,
                 };
 
                 self.is_vim_command_mode = false;
                 self.vim_command_input.clear();
 
-                action
+                result
             }
         }
     }

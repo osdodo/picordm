@@ -19,7 +19,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub enum Action {
+pub enum UpdateResult {
     None,
     Selected(ConnectionConfig),
     Edit(ConnectionConfig),
@@ -54,35 +54,35 @@ impl ConnectionList {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::Next => {
                 self.next();
-                Action::None
+                UpdateResult::None
             }
             Message::Previous => {
                 self.previous();
-                Action::None
+                UpdateResult::None
             }
             Message::Select => {
                 if let Some(config) = self.selected_connection().cloned() {
-                    Action::Selected(config)
+                    UpdateResult::Selected(config)
                 } else {
-                    Action::None
+                    UpdateResult::None
                 }
             }
             Message::Delete => {
                 self.delete_selected();
                 match save_connections(&self.connections) {
-                    Ok(_) => Action::None,
-                    Err(e) => Action::SaveError(format!("Failed to save: {}", e)),
+                    Ok(_) => UpdateResult::None,
+                    Err(e) => UpdateResult::SaveError(format!("Failed to save: {}", e)),
                 }
             }
             Message::Edit => {
                 if let Some(config) = self.selected_connection().cloned() {
-                    Action::Edit(config)
+                    UpdateResult::Edit(config)
                 } else {
-                    Action::None
+                    UpdateResult::None
                 }
             }
         }

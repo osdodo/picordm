@@ -64,36 +64,32 @@ impl App {
 
         match self.current_screen {
             Screen::Connection => {
-                if let Some(msg) = self.connection_screen.handle_key_events(key) {
-                    let action = self.connection_screen.update(msg);
-                    if let connection_screen::ActionResult::SwitchScreen(screen, config) = self
+                if let Some(msg) = self.connection_screen.handle_key_events(key)
+                    && let connection_screen::UpdateResult::SwitchScreen(screen, config) = self
                         .connection_screen
-                        .handle_action(action, terminal)
+                        .update(msg, terminal)
                         .await?
-                    {
-                        if let Err(e) = self.dashboard_screen.load_data(&config, terminal).await {
-                            self.connection_screen
-                                .footer
-                                .update(footer::Message::Error(Some(format!(
-                                    "Failed to load dashboard: {}",
-                                    e
-                                ))));
-                            return Ok(true);
-                        }
-                        self.current_screen = screen;
+                {
+                    if let Err(e) = self.dashboard_screen.load_data(&config, terminal).await {
+                        self.connection_screen
+                            .footer
+                            .update(footer::Message::Error(Some(format!(
+                                "Failed to load dashboard: {}",
+                                e
+                            ))));
+                        return Ok(true);
                     }
+                    self.current_screen = screen;
                 }
             }
             Screen::Dashboard => {
-                if let Some(msg) = self.dashboard_screen.handle_key_events(key) {
-                    let action = self.dashboard_screen.update(msg);
-                    if let dashboard_screen::ActionResult::SwitchScreen(screen) = self
+                if let Some(msg) = self.dashboard_screen.handle_key_events(key)
+                    && let dashboard_screen::UpdateResult::SwitchScreen(screen) = self
                         .dashboard_screen
-                        .handle_action(action, terminal)
+                        .update(msg, terminal)
                         .await?
-                    {
-                        self.current_screen = screen;
-                    }
+                {
+                    self.current_screen = screen;
                 }
             }
         }

@@ -43,7 +43,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub enum FormAction {
+pub enum UpdateResult {
     None,
     Saved(Box<ConnectionConfig>),
     Cancelled,
@@ -128,31 +128,31 @@ impl ConnectionForm {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> FormAction {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::NextField => {
                 self.next_field();
-                FormAction::None
+                UpdateResult::None
             }
             Message::PreviousField => {
                 self.previous_field();
-                FormAction::None
+                UpdateResult::None
             }
             Message::ToggleClusterMode => {
                 self.is_cluster = !self.is_cluster;
-                FormAction::None
+                UpdateResult::None
             }
             Message::UpdateField(c) => {
                 self.update_current_field(c);
-                FormAction::None
+                UpdateResult::None
             }
             Message::Backspace => {
                 self.backspace_current_field();
-                FormAction::None
+                UpdateResult::None
             }
             Message::ToggleCheckbox => {
                 self.toggle_current_checkbox();
-                FormAction::None
+                UpdateResult::None
             }
             Message::Save => {
                 if self.validate() {
@@ -164,14 +164,14 @@ impl ConnectionForm {
 
                     let config = self.to_connection_config(db_aliases);
                     self.is_open = false;
-                    FormAction::Saved(Box::new(config))
+                    UpdateResult::Saved(Box::new(config))
                 } else {
-                    FormAction::ValidationError
+                    UpdateResult::ValidationError
                 }
             }
             Message::Cancel => {
                 self.is_open = false;
-                FormAction::Cancelled
+                UpdateResult::Cancelled
             }
         }
     }

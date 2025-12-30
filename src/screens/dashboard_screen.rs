@@ -14,7 +14,7 @@ use crate::widgets::*;
 pub enum Message {
     KeyList(key_list::Message),
     SearchBox(search_box::Message),
-    DbSelectorKey(KeyCode),
+    DbSelector(db_selector::Message),
     ToggleDbSelector,
     DeleteDialog(delete_dialog::Message),
     ConnectionSwitcherKey(KeyEvent),
@@ -32,25 +32,8 @@ pub enum Message {
     ExitCommandMode,
 }
 
-#[derive(Debug, Clone)]
-pub enum Action {
-    None,
-    SwitchScreen(Screen),
-    LoadKeyValue(String),
-    ExecuteCommand(String),
-    SwitchDatabase(u32),
-    DeleteKeys(Vec<String>),
-    ImportFromFile(String),
-    SwitchConnection(crate::models::ConnectionConfig),
-    RefreshKeys,
-    RefreshServerInfo,
-    ExportData,
-    SaveKeyContent,
-    SaveAndQuitKeyContent,
-}
-
 #[derive(Debug)]
-pub enum ActionResult {
+pub enum UpdateResult {
     Continue,
     SwitchScreen(Screen),
 }
@@ -122,8 +105,8 @@ impl DashboardScreen {
         }
 
         if self.db_selector.is_open {
-            if let Some(key_code) = self.db_selector.handle_key_events(key) {
-                return Some(Message::DbSelectorKey(key_code));
+            if let Some(msg) = self.db_selector.handle_key_events(key) {
+                return Some(Message::DbSelector(msg));
             }
             return None;
         }
@@ -197,19 +180,45 @@ impl DashboardScreen {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub async fn update(
+        &mut self,
+        msg: Message,
+        terminal: &mut ratatui::DefaultTerminal,
+    ) -> Result<UpdateResult> {
         match msg {
             Message::KeyList(list_msg) => match list_msg {
                 key_list::Message::Select => {
                     if let Some(key) = self.key_list.update(list_msg) {
-                        Action::LoadKeyValue(key)
+                        // LoadKeyValue action
+                        self.view_mode = ViewMode::KeyContent;
+                        self.key_content_editor.set_loading_value(true);
+
+                        terminal.draw(|frame| {
+                            let area = frame.area();
+                            self.view(frame, area);
+                        })?;
+
+                        let db_index = self.get_current_db_index();
+                        match get_redis_service().get_value(&key, db_index).await {
+                            Ok(value) => {
+                                self.key_content_editor.load_key_value(key, value);
+                            }
+                            Err(e) => {
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to fetch value: {}",
+                                    e
+                                ))));
+                                self.key_content_editor.set_loading_value(false);
+                            }
+                        }
+                        Ok(UpdateResult::Continue)
                     } else {
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
                 }
                 _ => {
                     self.key_list.update(list_msg);
-                    Action::None
+                    Ok(UpdateResult::Continue)
                 }
             },
             Message::SearchBox(search_msg) => {
@@ -222,41 +231,46 @@ impl DashboardScreen {
                         self.search_box.update(search_msg);
                     }
                 }
-                Action::None
+                Ok(UpdateResult::Continue)
             }
             Message::ToggleDbSelector => {
                 self.db_selector.toggle();
-                Action::None
+                Ok(UpdateResult::Continue)
             }
-            Message::DbSelectorKey(key_code) => match key_code {
-                KeyCode::Esc => {
-                    self.db_selector.toggle();
-                    Action::None
-                }
-                KeyCode::Down => {
-                    self.db_selector.next();
-                    Action::None
-                }
-                KeyCode::Up => {
-                    self.db_selector.previous();
-                    Action::None
-                }
-                KeyCode::Enter => {
-                    if let Some(selected) = self.db_selector.state.selected() {
-                        if let Some(db_info) = self.db_selector.db_list.get(selected) {
-                            let db_index = db_info.index;
-                            self.db_selector.toggle();
-                            self.db_selector.current_db_index = db_index;
-                            Action::SwitchDatabase(db_index)
+            Message::DbSelector(db_selector_msg) => {
+                match self.db_selector.update(db_selector_msg) {
+                    db_selector::UpdateResult::Selected(db_index) => {
+                        // SwitchDatabase action
+                        self.set_loading_keys(true);
+
+                        terminal.draw(|frame| {
+                            let area = frame.area();
+                            self.view(frame, area);
+                        })?;
+
+                        let pattern = if self.search_box.text.is_empty() {
+                            "*".to_string()
                         } else {
-                            Action::None
+                            self.search_box.text.clone()
+                        };
+
+                        match get_redis_service().get_keys(&pattern, db_index).await {
+                            Ok(keys) => {
+                                self.key_list.update_keys(keys);
+                            }
+                            Err(e) => {
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to fetch keys: {}",
+                                    e
+                                ))));
+                                self.set_loading_keys(false);
+                            }
                         }
-                    } else {
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
+                    db_selector::UpdateResult::None => Ok(UpdateResult::Continue),
                 }
-                _ => Action::None,
-            },
+            }
             Message::DeleteDialog(dialog_msg) => {
                 match dialog_msg {
                     delete_dialog::Message::Confirm => {
@@ -265,300 +279,238 @@ impl DashboardScreen {
                             let keys_to_delete = self.key_list.get_selected_keys();
                             if !keys_to_delete.is_empty() {
                                 self.delete_dialog.open(keys_to_delete.len());
-                                Action::None
-                            } else {
-                                Action::None
                             }
+                            Ok(UpdateResult::Continue)
                         } else {
                             // Dialog is open, handle confirm
                             self.delete_dialog.update(dialog_msg);
-                            Action::DeleteKeys(self.key_list.get_selected_keys())
+                            let keys_to_delete = self.key_list.get_selected_keys();
+                            // DeleteKeys action
+                            if !keys_to_delete.is_empty() {
+                                let db_index = self.get_current_db_index();
+
+                                self.progress_dialog.update(progress_dialog::Message::Show(
+                                    "Deleting Keys".to_string(),
+                                    format!("Deleting {} keys...", keys_to_delete.len()),
+                                ));
+
+                                terminal.draw(|frame| {
+                                    let area = frame.area();
+                                    self.view(frame, area);
+                                })?;
+
+                                for key in &keys_to_delete {
+                                    let _ = get_redis_service().delete_key(key, db_index).await;
+                                }
+
+                                self.key_list.clear_selection();
+                                self.delete_dialog.close();
+
+                                // Refresh server information and database list
+                                if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
+                                    self.update_server_info(Some(info));
+                                    self.update_db_list(db_list);
+                                }
+
+                                // Refresh list
+                                let pattern = if self.search_box.text.is_empty() {
+                                    "*".to_string()
+                                } else {
+                                    self.search_box.text.clone()
+                                };
+
+                                if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
+                                    self.key_list.update_keys(keys);
+                                }
+
+                                self.progress_dialog.update(progress_dialog::Message::Hide);
+                            }
+                            Ok(UpdateResult::Continue)
                         }
                     }
                     delete_dialog::Message::Cancel => {
                         self.delete_dialog.update(dialog_msg);
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
                 }
             }
             Message::ConnectionSwitcherKey(key) => {
                 if let Some(msg) = self.connection_switcher.handle_key_events(key) {
                     if let Some(config) = self.connection_switcher.update(msg) {
-                        Action::SwitchConnection(config)
+                        // SwitchConnection action
+                        self.connection_switcher.is_open = false;
+
+                        // Disconnect current connection
+                        self.disconnect().await;
+
+                        // Connect new Redis
+                        self.set_loading_keys(true);
+                        terminal.draw(|frame| {
+                            let area = frame.area();
+                            self.view(frame, area);
+                        })?;
+
+                        match self.connect_and_load(&config, terminal).await {
+                            Ok(_) => Ok(UpdateResult::Continue),
+                            Err(e) => {
+                                self.set_loading_keys(false);
+                                // Show error message and stay on dashboard screen
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to connect: {}",
+                                    e
+                                ))));
+                                Ok(UpdateResult::Continue)
+                            }
+                        }
                     } else {
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
                 } else {
-                    Action::None
+                    Ok(UpdateResult::Continue)
                 }
             }
             Message::FileSelector(file_msg) => match file_msg {
                 file_selector::Message::Enter => {
                     if let Some(path) = self.file_selector.update(file_msg) {
-                        Action::ImportFromFile(path.to_string_lossy().to_string())
+                        // ImportFromFile action
+                        self.file_selector.close();
+
+                        // Show progress dialog
+                        self.progress_dialog.update(progress_dialog::Message::Show(
+                            "Importing Data".to_string(),
+                            "Reading file...".to_string(),
+                        ));
+
+                        // Draw progress dialog
+                        terminal.draw(|frame| {
+                            let area = frame.area();
+                            self.view(frame, area);
+                        })?;
+
+                        // Execute import
+                        let db_index = self.get_current_db_index();
+                        match impex::import_redis_data(&path, db_index, false).await {
+                            Ok((imported, _skipped)) => {
+                                self.progress_dialog
+                                    .update(progress_dialog::Message::Complete(format!(
+                                        "Successfully imported {} keys",
+                                        imported
+                                    )));
+
+                                // Draw completion message
+                                terminal.draw(|frame| {
+                                    let area = frame.area();
+                                    self.view(frame, area);
+                                })?;
+
+                                self.footer.update(footer::Message::Error(None));
+
+                                // Refresh server information and database list
+                                if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
+                                    self.update_server_info(Some(info));
+                                    self.update_db_list(db_list);
+                                }
+
+                                // Refresh list
+                                let pattern = if self.search_box.text.is_empty() {
+                                    "*".to_string()
+                                } else {
+                                    self.search_box.text.clone()
+                                };
+
+                                if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
+                                    self.key_list.update_keys(keys);
+                                }
+
+                                // Wait for a moment to let the user see the completion message
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                self.progress_dialog.update(progress_dialog::Message::Hide);
+                            }
+                            Err(e) => {
+                                self.progress_dialog.update(progress_dialog::Message::Hide);
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to import: {}",
+                                    e
+                                ))));
+                            }
+                        }
+                        Ok(UpdateResult::Continue)
                     } else {
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
                 }
                 _ => {
                     self.file_selector.update(file_msg);
-                    Action::None
+                    Ok(UpdateResult::Continue)
                 }
             },
             Message::KeyContentEditor(editor_msg) => {
-                // KeyContentEditor update returns Action, needs to be handled in handle_action
                 let action = self.key_content_editor.update(editor_msg);
                 match action {
-                    key_content_editor::Action::Save => Action::SaveKeyContent,
-                    key_content_editor::Action::SaveAndQuit => Action::SaveAndQuitKeyContent,
-                    key_content_editor::Action::Quit => {
+                    key_content_editor::UpdateResult::Save => {
+                        // SaveKeyContent action
+                        if let Some(key) = self.key_content_editor.get_current_key() {
+                            let value = self.key_content_editor.get_editor_content();
+                            let db_index = self.get_current_db_index();
+
+                            match get_redis_service().set_value(&key, &value, db_index).await {
+                                Ok(_) => {
+                                    self.key_content_editor.content = value;
+                                    self.footer.update(footer::Message::Error(None));
+                                }
+                                Err(e) => {
+                                    self.footer.update(footer::Message::Error(Some(format!(
+                                        "Failed to save: {}",
+                                        e
+                                    ))));
+                                }
+                            }
+                        }
+                        Ok(UpdateResult::Continue)
+                    }
+                    key_content_editor::UpdateResult::SaveAndQuit => {
+                        // SaveAndQuitKeyContent action
+                        if let Some(key) = self.key_content_editor.get_current_key() {
+                            let value = self.key_content_editor.get_editor_content();
+                            let db_index = self.get_current_db_index();
+                            let _ = get_redis_service().set_value(&key, &value, db_index).await;
+                        }
                         self.view_mode = ViewMode::KeyList;
-                        Action::None
+                        Ok(UpdateResult::Continue)
                     }
-                    _ => Action::None,
+                    key_content_editor::UpdateResult::Quit => {
+                        self.view_mode = ViewMode::KeyList;
+                        Ok(UpdateResult::Continue)
+                    }
+                    _ => Ok(UpdateResult::Continue),
                 }
             }
-            Message::CommandMode(cmd_msg) => match self.command_mode.update(cmd_msg.clone()) {
-                command_mode::Action::ExecuteCommand { command } => Action::ExecuteCommand(command),
-                command_mode::Action::None => Action::None,
-            },
-            Message::Disconnect => Action::SwitchScreen(Screen::Connection),
-            Message::OpenConnectionSwitcher => {
-                let connections = connection_storage::load_connections();
-                self.connection_switcher
-                    .open(connections, self.header.connection_name.as_ref().cloned());
-                Action::None
-            }
-            Message::RefreshKeys => Action::RefreshKeys,
-            Message::RefreshServerInfo => Action::RefreshServerInfo,
-            Message::ExportData => Action::ExportData,
-            Message::EnterCommandMode => {
-                self.view_mode = ViewMode::CommandMode;
-                self.command_mode.reset();
-                Action::None
-            }
-            Message::ExitKeyContent => {
-                self.view_mode = ViewMode::KeyList;
-                Action::None
-            }
-            Message::ExitCommandMode => {
-                self.view_mode = ViewMode::KeyList;
-                Action::None
-            }
-        }
-    }
-
-    pub async fn handle_action(
-        &mut self,
-        action: Action,
-        terminal: &mut ratatui::DefaultTerminal,
-    ) -> Result<ActionResult> {
-        match action {
-            Action::SwitchScreen(screen) => {
-                self.disconnect().await;
-                Ok(ActionResult::SwitchScreen(screen))
-            }
-            Action::LoadKeyValue(key) => {
-                self.view_mode = ViewMode::KeyContent;
-                self.key_content_editor.set_loading_value(true);
-
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
-                })?;
-
-                let db_index = self.get_current_db_index();
-                match get_redis_service().get_value(&key, db_index).await {
-                    Ok(value) => {
-                        self.key_content_editor.load_key_value(key, value);
-                    }
-                    Err(e) => {
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to fetch value: {}",
-                            e
-                        ))));
-                        self.key_content_editor.set_loading_value(false);
-                    }
-                }
-                Ok(ActionResult::Continue)
-            }
-            Action::ExecuteCommand(command) => {
+            Message::CommandMode(cmd_msg) => {
                 let db_index = self.get_current_db_index();
                 self.command_mode
-                    .handle_action(
-                        command_mode::Action::ExecuteCommand { command },
+                    .update(
+                        cmd_msg,
                         db_index,
                         |error| {
                             self.footer.update(footer::Message::Error(error));
                         },
                     )
                     .await?;
-                Ok(ActionResult::Continue)
+                Ok(UpdateResult::Continue)
             }
-            // Handle KeyContentEditor actions that need Redis context
-            // These are handled inline when KeyContentEditorMessage is processed
-            // because the editor state is already updated in the update() method
-            Action::SwitchDatabase(db_index) => {
-                self.set_loading_keys(true);
-
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
-                })?;
-
-                let pattern = if self.search_box.text.is_empty() {
-                    "*".to_string()
-                } else {
-                    self.search_box.text.clone()
-                };
-
-                match get_redis_service().get_keys(&pattern, db_index).await {
-                    Ok(keys) => {
-                        self.key_list.update_keys(keys);
-                    }
-                    Err(e) => {
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to fetch keys: {}",
-                            e
-                        ))));
-                        self.set_loading_keys(false);
-                    }
-                }
-                Ok(ActionResult::Continue)
-            }
-            Action::DeleteKeys(keys_to_delete) => {
-                if !keys_to_delete.is_empty() {
-                    let db_index = self.get_current_db_index();
-
-                    self.progress_dialog.update(progress_dialog::Message::Show(
-                        "Deleting Keys".to_string(),
-                        format!("Deleting {} keys...", keys_to_delete.len()),
-                    ));
-
-                    terminal.draw(|frame| {
-                        let area = frame.area();
-                        self.view(frame, area);
-                    })?;
-
-                    for key in &keys_to_delete {
-                        let _ = get_redis_service().delete_key(key, db_index).await;
-                    }
-
-                    self.key_list.clear_selection();
-                    self.delete_dialog.close();
-
-                    // Refresh server information and database list
-                    if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
-                        self.update_server_info(Some(info));
-                        self.update_db_list(db_list);
-                    }
-
-                    // Refresh list
-                    let pattern = if self.search_box.text.is_empty() {
-                        "*".to_string()
-                    } else {
-                        self.search_box.text.clone()
-                    };
-
-                    if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
-                        self.key_list.update_keys(keys);
-                    }
-
-                    self.progress_dialog.update(progress_dialog::Message::Hide);
-                }
-                Ok(ActionResult::Continue)
-            }
-            Action::ImportFromFile(path) => {
-                self.file_selector.close();
-
-                // Show progress dialog
-                self.progress_dialog.update(progress_dialog::Message::Show(
-                    "Importing Data".to_string(),
-                    "Reading file...".to_string(),
-                ));
-
-                // Draw progress dialog
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
-                })?;
-
-                // Execute import
-                let db_index = self.get_current_db_index();
-                match impex::import_redis_data(std::path::Path::new(&path), db_index, false).await {
-                    Ok((imported, _skipped)) => {
-                        self.progress_dialog
-                            .update(progress_dialog::Message::Complete(format!(
-                                "Successfully imported {} keys",
-                                imported
-                            )));
-
-                        // Draw completion message
-                        terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
-                        })?;
-
-                        self.footer.update(footer::Message::Error(None));
-
-                        // Refresh server information and database list
-                        if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
-                            self.update_server_info(Some(info));
-                            self.update_db_list(db_list);
-                        }
-
-                        // Refresh list
-                        let pattern = if self.search_box.text.is_empty() {
-                            "*".to_string()
-                        } else {
-                            self.search_box.text.clone()
-                        };
-
-                        if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
-                            self.key_list.update_keys(keys);
-                        }
-
-                        // Wait for a moment to let the user see the completion message
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        self.progress_dialog.update(progress_dialog::Message::Hide);
-                    }
-                    Err(e) => {
-                        self.progress_dialog.update(progress_dialog::Message::Hide);
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to import: {}",
-                            e
-                        ))));
-                    }
-                }
-                Ok(ActionResult::Continue)
-            }
-            Action::SwitchConnection(config) => {
-                self.connection_switcher.is_open = false;
-
-                // Disconnect current connection
+            Message::Disconnect => {
+                // SwitchScreen action
                 self.disconnect().await;
-
-                // Connect new Redis
-                self.set_loading_keys(true);
-                terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
-                })?;
-
-                match self.connect_and_load(&config, terminal).await {
-                    Ok(_) => Ok(ActionResult::Continue),
-                    Err(e) => {
-                        self.set_loading_keys(false);
-                        // Show error message and stay on dashboard screen
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to connect: {}",
-                            e
-                        ))));
-                        Ok(ActionResult::Continue)
-                    }
-                }
+                Ok(UpdateResult::SwitchScreen(Screen::Connection))
             }
-            Action::RefreshKeys => {
+            Message::OpenConnectionSwitcher => {
+                let connections = connection_storage::load_connections();
+                self.connection_switcher
+                    .open(connections, self.header.connection_name.as_ref().cloned());
+                Ok(UpdateResult::Continue)
+            }
+            Message::RefreshKeys => {
+                // RefreshKeys action
                 self.set_loading_keys(true);
 
                 terminal.draw(|frame| {
@@ -585,9 +537,10 @@ impl DashboardScreen {
                         self.set_loading_keys(false);
                     }
                 }
-                Ok(ActionResult::Continue)
+                Ok(UpdateResult::Continue)
             }
-            Action::RefreshServerInfo => {
+            Message::RefreshServerInfo => {
+                // RefreshServerInfo action
                 self.set_loading_server_info(true);
 
                 terminal.draw(|frame| {
@@ -609,44 +562,29 @@ impl DashboardScreen {
                 }
 
                 self.set_loading_server_info(false);
-                Ok(ActionResult::Continue)
+                Ok(UpdateResult::Continue)
             }
-            Action::ExportData => {
+            Message::ExportData => {
+                // ExportData action
                 self.export_data(terminal).await?;
-                Ok(ActionResult::Continue)
+                Ok(UpdateResult::Continue)
             }
-            Action::SaveKeyContent => {
-                if let Some(key) = self.key_content_editor.get_current_key() {
-                    let value = self.key_content_editor.get_editor_content();
-                    let db_index = self.get_current_db_index();
-
-                    match get_redis_service().set_value(&key, &value, db_index).await {
-                        Ok(_) => {
-                            self.key_content_editor.content = value;
-                            self.footer.update(footer::Message::Error(None));
-                        }
-                        Err(e) => {
-                            self.footer.update(footer::Message::Error(Some(format!(
-                                "Failed to save: {}",
-                                e
-                            ))));
-                        }
-                    }
-                }
-                Ok(ActionResult::Continue)
+            Message::EnterCommandMode => {
+                self.view_mode = ViewMode::CommandMode;
+                self.command_mode.reset();
+                Ok(UpdateResult::Continue)
             }
-            Action::SaveAndQuitKeyContent => {
-                if let Some(key) = self.key_content_editor.get_current_key() {
-                    let value = self.key_content_editor.get_editor_content();
-                    let db_index = self.get_current_db_index();
-                    let _ = get_redis_service().set_value(&key, &value, db_index).await;
-                }
+            Message::ExitKeyContent => {
                 self.view_mode = ViewMode::KeyList;
-                Ok(ActionResult::Continue)
+                Ok(UpdateResult::Continue)
             }
-            _ => Ok(ActionResult::Continue),
+            Message::ExitCommandMode => {
+                self.view_mode = ViewMode::KeyList;
+                Ok(UpdateResult::Continue)
+            }
         }
     }
+
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         self.footer
@@ -958,3 +896,4 @@ impl DashboardScreen {
         Ok(())
     }
 }
+
