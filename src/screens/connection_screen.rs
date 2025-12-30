@@ -82,52 +82,48 @@ impl ConnectionScreen {
                 }
                 Ok(UpdateResult::Continue)
             }
-            Message::List(list_msg) => {
-                match self.connection_list.update(list_msg) {
-                    connection_list::UpdateResult::Selected(config) => {
-                        self.is_connecting = true;
-                        self.footer.update(footer::Message::Error(None));
-                        terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
-                        })?;
+            Message::List(list_msg) => match self.connection_list.update(list_msg) {
+                connection_list::UpdateResult::Selected(config) => {
+                    self.is_connecting = true;
+                    self.footer.update(footer::Message::Error(None));
+                    terminal.draw(|frame| {
+                        let area = frame.area();
+                        self.view(frame, area);
+                    })?;
 
-                        match get_redis_service().connect(&config).await {
-                            Ok(_) => {
-                                self.is_connecting = false;
-                                Ok(UpdateResult::SwitchScreen(
-                                    Screen::Dashboard,
-                                    Box::new(config),
-                                ))
-                            }
-                            Err(e) => {
-                                self.is_connecting = false;
-                                self.footer.update(footer::Message::Error(Some(format!(
-                                    "Failed to connect: {}",
-                                    e
-                                ))));
-                                Ok(UpdateResult::Continue)
-                            }
+                    match get_redis_service().connect(&config).await {
+                        Ok(_) => {
+                            self.is_connecting = false;
+                            Ok(UpdateResult::SwitchScreen(
+                                Screen::Dashboard,
+                                Box::new(config),
+                            ))
+                        }
+                        Err(e) => {
+                            self.is_connecting = false;
+                            self.footer.update(footer::Message::Error(Some(format!(
+                                "Failed to connect: {}",
+                                e
+                            ))));
+                            Ok(UpdateResult::Continue)
                         }
                     }
-                    connection_list::UpdateResult::Edit(config) => {
-                        self.connection_form.open_edit(&config);
-                        Ok(UpdateResult::Continue)
-                    }
-                    connection_list::UpdateResult::SaveError(error) => {
-                        self.footer.update(footer::Message::Error(Some(error)));
-                        Ok(UpdateResult::Continue)
-                    }
-                    connection_list::UpdateResult::None => Ok(UpdateResult::Continue),
                 }
-            }
+                connection_list::UpdateResult::Edit(config) => {
+                    self.connection_form.open_edit(&config);
+                    Ok(UpdateResult::Continue)
+                }
+                connection_list::UpdateResult::SaveError(error) => {
+                    self.footer.update(footer::Message::Error(Some(error)));
+                    Ok(UpdateResult::Continue)
+                }
+                connection_list::UpdateResult::None => Ok(UpdateResult::Continue),
+            },
             Message::OpenNewForm => {
                 self.connection_form.open_new();
                 Ok(UpdateResult::Continue)
             }
-            Message::QuickImport => {
-                self.quick_import_from_clipboard(terminal).await
-            }
+            Message::QuickImport => self.quick_import_from_clipboard(terminal).await,
         }
     }
 

@@ -1,7 +1,10 @@
-use anyhow::Result;
-use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::time::Duration;
+
+use anyhow::Result;
+use ratatui::{
+    DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+};
 
 use crate::models::Screen;
 use crate::screens::{connection_screen, dashboard_screen};
@@ -22,7 +25,7 @@ impl App {
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
+    pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| self.view(frame))?;
 
@@ -56,7 +59,7 @@ impl App {
     async fn handle_key_events(
         &mut self,
         key: KeyEvent,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut DefaultTerminal,
     ) -> Result<bool> {
         if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(false);
@@ -65,10 +68,8 @@ impl App {
         match self.current_screen {
             Screen::Connection => {
                 if let Some(msg) = self.connection_screen.handle_key_events(key)
-                    && let connection_screen::UpdateResult::SwitchScreen(screen, config) = self
-                        .connection_screen
-                        .update(msg, terminal)
-                        .await?
+                    && let connection_screen::UpdateResult::SwitchScreen(screen, config) =
+                        self.connection_screen.update(msg, terminal).await?
                 {
                     if let Err(e) = self.dashboard_screen.load_data(&config, terminal).await {
                         self.connection_screen
@@ -84,10 +85,8 @@ impl App {
             }
             Screen::Dashboard => {
                 if let Some(msg) = self.dashboard_screen.handle_key_events(key)
-                    && let dashboard_screen::UpdateResult::SwitchScreen(screen) = self
-                        .dashboard_screen
-                        .update(msg, terminal)
-                        .await?
+                    && let dashboard_screen::UpdateResult::SwitchScreen(screen) =
+                        self.dashboard_screen.update(msg, terminal).await?
                 {
                     self.current_screen = screen;
                 }

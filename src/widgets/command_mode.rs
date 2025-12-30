@@ -19,7 +19,6 @@ pub enum Message {
     EditorKeyEvent(KeyEvent),
 }
 
-
 pub struct CommandMode {
     pub command_input: String,
     pub command_output: String,
@@ -97,24 +96,25 @@ impl CommandMode {
                         return Ok(());
                     }
 
-                    let mut output = match get_redis_service().execute_command(&parts, db_index).await {
-                        Ok(output) => {
-                            update_footer_error(None);
-                            output
-                        }
-                        Err(e) => {
-                            let error_str = e.to_string();
-                            if error_str.contains("broken pipe")
-                                || error_str.contains("Connection refused")
-                                || error_str.contains("Connection reset")
-                            {
-                                update_footer_error(Some(
-                                    "Connection lost, please reconnect".to_string(),
-                                ));
+                    let mut output =
+                        match get_redis_service().execute_command(&parts, db_index).await {
+                            Ok(output) => {
+                                update_footer_error(None);
+                                output
                             }
-                            format!("(error) {}", error_str)
-                        }
-                    };
+                            Err(e) => {
+                                let error_str = e.to_string();
+                                if error_str.contains("broken pipe")
+                                    || error_str.contains("Connection refused")
+                                    || error_str.contains("Connection reset")
+                                {
+                                    update_footer_error(Some(
+                                        "Connection lost, please reconnect".to_string(),
+                                    ));
+                                }
+                                format!("(error) {}", error_str)
+                            }
+                        };
 
                     // Limit output size
                     const MAX_OUTPUT_SIZE: usize = 500 * 1024;
@@ -292,5 +292,4 @@ impl CommandMode {
         self.focus_on_output = false;
         self.editor_state = EditorState::default();
     }
-
 }

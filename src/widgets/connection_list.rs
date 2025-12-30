@@ -1,5 +1,3 @@
-use crate::models::ConnectionConfig;
-use crate::widgets::connection_storage::{load_connections, save_connections};
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
@@ -8,6 +6,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState},
 };
+
+use crate::models::ConnectionConfig;
+use crate::widgets::connection_storage::{load_connections, save_connections};
 
 #[derive(Debug, Clone)]
 pub enum Message {

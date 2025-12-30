@@ -307,7 +307,9 @@ impl DashboardScreen {
                                 self.delete_dialog.close();
 
                                 // Refresh server information and database list
-                                if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
+                                if let Ok((info, db_list)) =
+                                    get_redis_service().get_server_info().await
+                                {
                                     self.update_server_info(Some(info));
                                     self.update_db_list(db_list);
                                 }
@@ -319,7 +321,9 @@ impl DashboardScreen {
                                     self.search_box.text.clone()
                                 };
 
-                                if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
+                                if let Ok(keys) =
+                                    get_redis_service().get_keys(&pattern, db_index).await
+                                {
                                     self.key_list.update_keys(keys);
                                 }
 
@@ -406,7 +410,9 @@ impl DashboardScreen {
                                 self.footer.update(footer::Message::Error(None));
 
                                 // Refresh server information and database list
-                                if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
+                                if let Ok((info, db_list)) =
+                                    get_redis_service().get_server_info().await
+                                {
                                     self.update_server_info(Some(info));
                                     self.update_db_list(db_list);
                                 }
@@ -418,7 +424,9 @@ impl DashboardScreen {
                                     self.search_box.text.clone()
                                 };
 
-                                if let Ok(keys) = get_redis_service().get_keys(&pattern, db_index).await {
+                                if let Ok(keys) =
+                                    get_redis_service().get_keys(&pattern, db_index).await
+                                {
                                     self.key_list.update_keys(keys);
                                 }
 
@@ -488,13 +496,9 @@ impl DashboardScreen {
             Message::CommandMode(cmd_msg) => {
                 let db_index = self.get_current_db_index();
                 self.command_mode
-                    .update(
-                        cmd_msg,
-                        db_index,
-                        |error| {
-                            self.footer.update(footer::Message::Error(error));
-                        },
-                    )
+                    .update(cmd_msg, db_index, |error| {
+                        self.footer.update(footer::Message::Error(error));
+                    })
                     .await?;
                 Ok(UpdateResult::Continue)
             }
@@ -584,7 +588,6 @@ impl DashboardScreen {
             }
         }
     }
-
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         self.footer
@@ -896,4 +899,3 @@ impl DashboardScreen {
         Ok(())
     }
 }
-

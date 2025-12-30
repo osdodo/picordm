@@ -227,8 +227,10 @@ impl KeyList {
         let filtered_keys = self.get_filtered_keys();
         // Check if all filtered keys are already selected
         let all_selected = !filtered_keys.is_empty()
-            && filtered_keys.iter().all(|key| self.selected_keys.contains(key));
-        
+            && filtered_keys
+                .iter()
+                .all(|key| self.selected_keys.contains(key));
+
         if all_selected {
             // Deselect all filtered keys
             for key in &filtered_keys {
