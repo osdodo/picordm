@@ -403,19 +403,36 @@ impl DashboardScreen {
                         // Execute import
                         let db_index = self.get_current_db_index();
                         match impex::import_redis_data(&path, db_index, false).await {
-                            Ok((imported, _skipped)) => {
+                            Ok(result) => {
+                                let mut message = format!(
+                                    "Successfully imported {} keys",
+                                    result.imported_count
+                                );
+                                if result.skipped_count > 0 {
+                                    message.push_str(&format!(", {} skipped", result.skipped_count));
+                                }
+                                if !result.failed_keys.is_empty() {
+                                    message.push_str(&format!(", {} failed", result.failed_keys.len()));
+                                }
+
+                                // Show error details in dialog if there are failed keys
+                                let error_list = if !result.failed_keys.is_empty() {
+                                    Some(
+                                        result.failed_keys
+                                            .iter()
+                                            .map(|(k, e)| format!("{}: {}", k, e))
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
+                                };
                                 self.progress_dialog
-                                    .update(progress_dialog::Message::Complete(format!(
-                                        "Successfully imported {} keys",
-                                        imported
-                                    )));
+                                    .update(progress_dialog::Message::Complete(message.clone(), error_list));
 
                                 // Draw completion message
                                 terminal.draw(|frame| {
                                     self.view(frame);
                                 })?;
-
-                                self.footer.update(footer::Message::Error(None));
 
                                 // Refresh server information and database list
                                 if let Ok((info, db_list)) =
@@ -867,25 +884,39 @@ impl DashboardScreen {
 
         // Execute export
         match super::impex::export_redis_data(connection_name, database, &keys, &file_path).await {
-            Ok(exported_count) => {
+            Ok(result) => {
                 let location = if file_path.starts_with(dirs::desktop_dir().unwrap_or_default()) {
                     "Desktop"
                 } else {
                     "current directory"
                 };
 
+                let mut message = format!(
+                    "Exported {} keys to {}",
+                    result.exported_count, location
+                );
+                if !result.failed_keys.is_empty() {
+                    message.push_str(&format!(", {} failed", result.failed_keys.len()));
+                }
+
+                // Show error details in dialog if there are failed keys
+                let error_list = if !result.failed_keys.is_empty() {
+                    Some(
+                        result.failed_keys
+                            .iter()
+                            .map(|(k, e)| format!("{}: {}", k, e))
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
                 self.progress_dialog
-                    .update(progress_dialog::Message::Complete(format!(
-                        "Exported {} keys to {}",
-                        exported_count, location
-                    )));
+                    .update(progress_dialog::Message::Complete(message.clone(), error_list));
 
                 // Draw completion message
                 terminal.draw(|frame| {
                     self.view(frame);
                 })?;
-
-                self.footer.update(footer::Message::Error(None));
 
                 // Wait for a moment to let the user see the completion message
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

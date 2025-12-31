@@ -7,6 +7,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::service::get_redis_service;
 
+#[derive(Debug)]
+pub struct ExportResult {
+    pub exported_count: usize,
+    pub failed_keys: Vec<(String, String)>,
+}
+
+#[derive(Debug)]
+pub struct ImportResult {
+    pub imported_count: usize,
+    pub skipped_count: usize,
+    pub failed_keys: Vec<(String, String)>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RedisExportData {
     pub version: String,
@@ -47,9 +60,10 @@ pub async fn export_redis_data(
     database: u32,
     keys: &[String],
     file_path: &Path,
-) -> Result<usize> {
+) -> Result<ExportResult> {
     let mut export_data = RedisExportData::new(connection_name, database);
     let mut exported_count = 0;
+    let mut failed_keys = Vec::new();
 
     for key in keys {
         match export_redis_key(key, database).await {
@@ -58,7 +72,7 @@ pub async fn export_redis_data(
                 exported_count += 1;
             }
             Err(e) => {
-                log::warn!("Failed to export key '{}': {}", key, e);
+                failed_keys.push((key.clone(), e.to_string()));
             }
         }
     }
@@ -69,7 +83,10 @@ pub async fn export_redis_data(
     fs::write(file_path, json_content)
         .with_context(|| format!("Failed to write Redis export file: {:?}", file_path))?;
 
-    Ok(exported_count)
+    Ok(ExportResult {
+        exported_count,
+        failed_keys,
+    })
 }
 
 async fn export_redis_key(key: &str, database: u32) -> Result<RedisKeyData> {
@@ -131,7 +148,7 @@ pub async fn import_redis_data(
     file_path: &Path,
     database: u32,
     overwrite: bool,
-) -> Result<(usize, usize)> {
+) -> Result<ImportResult> {
     let redis = get_redis_service();
     let content = fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read Redis import file: {:?}", file_path))?;
@@ -152,6 +169,7 @@ pub async fn import_redis_data(
 
     let mut imported_count = 0;
     let mut skipped_count = 0;
+    let mut failed_keys = Vec::new();
 
     // Use database from JSON file if specified, otherwise use the provided database parameter
     let target_database = import_data.database.unwrap_or(database);
@@ -180,13 +198,17 @@ pub async fn import_redis_data(
                 }
             }
             Err(e) => {
-                log::warn!("Failed to import key '{}': {}", key, e);
+                failed_keys.push((key.clone(), e.to_string()));
                 skipped_count += 1;
             }
         }
     }
 
-    Ok((imported_count, skipped_count))
+    Ok(ImportResult {
+        imported_count,
+        skipped_count,
+        failed_keys,
+    })
 }
 
 async fn import_redis_key(key: &str, key_data: &RedisKeyData, database: u32) -> Result<()> {

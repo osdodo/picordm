@@ -9,13 +9,14 @@ use ratatui::{
 #[derive(Debug, Clone)]
 pub enum Message {
     Show(String, String),
-    Complete(String),
+    Complete(String, Option<Vec<String>>),
     Hide,
 }
 
 pub struct ProgressDialog {
     pub title: String,
     pub message: String,
+    pub error_details: Vec<String>,
     pub is_complete: bool,
     pub progress: Option<(usize, usize)>,
     pub completed_at: Option<std::time::Instant>,
@@ -27,6 +28,7 @@ impl ProgressDialog {
         Self {
             title: String::new(),
             message: String::new(),
+            error_details: Vec::new(),
             is_complete: false,
             progress: None,
             completed_at: None,
@@ -39,13 +41,15 @@ impl ProgressDialog {
             Message::Show(title, message) => {
                 self.title = title;
                 self.message = message;
+                self.error_details.clear();
                 self.is_complete = false;
                 self.progress = None;
                 self.completed_at = None;
                 self.is_visible = true;
             }
-            Message::Complete(message) => {
+            Message::Complete(message, errors) => {
                 self.message = message;
+                self.error_details = errors.unwrap_or_default();
                 self.is_complete = true;
                 self.completed_at = Some(std::time::Instant::now());
             }
@@ -80,12 +84,23 @@ impl ProgressDialog {
 
         frame.render_widget(block, area);
 
+        let error_height = if !self.error_details.is_empty() {
+            // Calculate height needed for error details (max 5 lines)
+            (self.error_details.len().min(5) + 1) as u16
+        } else {
+            0
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(2), // Message with more space
-                Constraint::Length(1), // Progress indicator
+                Constraint::Length(2), // Message
+                if error_height > 0 {
+                    Constraint::Length(error_height)
+                } else {
+                    Constraint::Length(1)
+                }, // Error details or hint
             ])
             .split(area);
 
@@ -123,8 +138,37 @@ impl ProgressDialog {
             Paragraph::new(message_lines).alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(message_widget, chunks[0]);
 
-        // Bottom hint - only show when complete
-        if self.is_complete {
+        // Show error details or hint
+        if !self.error_details.is_empty() {
+            let mut error_lines = vec![Line::from(vec![
+                Span::styled(
+                    "Failed keys: ",
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+
+            // Show up to 5 failed keys
+            for error in self.error_details.iter().take(5) {
+                error_lines.push(Line::from(vec![
+                    Span::styled("  • ", Style::default().fg(Color::Red)),
+                    Span::styled(error, Style::default().fg(Color::Yellow)),
+                ]));
+            }
+
+            if self.error_details.len() > 5 {
+                error_lines.push(Line::from(vec![Span::styled(
+                    format!("  ... and {} more", self.error_details.len() - 5),
+                    Style::default().fg(Color::DarkGray),
+                )]));
+            }
+
+            let error_widget = Paragraph::new(error_lines)
+                .alignment(ratatui::layout::Alignment::Left)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            frame.render_widget(error_widget, chunks[1]);
+        } else if self.is_complete {
             let hint_widget = Paragraph::new(Line::from(vec![
                 Span::styled("Press ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
