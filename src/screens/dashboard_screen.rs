@@ -8,7 +8,12 @@ use ratatui::{
 use crate::models::{DbInfo, Screen, ServerInfo, ViewMode};
 use crate::screens::{impex, utils::centered_rect_fixed_height};
 use crate::service::get_redis_service;
-use crate::widgets::*;
+use crate::widgets::{
+    CommandMode, ConnectionSwitcher, DbSelector, DeleteDialog, FileSelector, Footer, Header,
+    KeyContentEditor, KeyList, ProgressDialog, SearchBox, command_mode, connection_storage,
+    db_selector, delete_dialog, file_selector, footer, header, key_content_editor, key_list,
+    progress_dialog, search_box,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -194,8 +199,7 @@ impl DashboardScreen {
                         self.key_content_editor.set_loading_value(true);
 
                         terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
+                            self.view(frame);
                         })?;
 
                         let db_index = self.get_current_db_index();
@@ -244,8 +248,7 @@ impl DashboardScreen {
                         self.set_loading_keys(true);
 
                         terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
+                            self.view(frame);
                         })?;
 
                         let pattern = if self.search_box.text.is_empty() {
@@ -295,8 +298,7 @@ impl DashboardScreen {
                                 ));
 
                                 terminal.draw(|frame| {
-                                    let area = frame.area();
-                                    self.view(frame, area);
+                                    self.view(frame);
                                 })?;
 
                                 for key in &keys_to_delete {
@@ -347,16 +349,24 @@ impl DashboardScreen {
                         // Disconnect current connection
                         self.disconnect().await;
 
-                        // Connect new Redis
+                        // Set connecting state and update connection name
+                        self.header
+                            .update(header::Message::UpdateConnectionName(Some(
+                                config.name.clone(),
+                            )));
+                        self.header.update(header::Message::SetConnecting(true));
                         self.set_loading_keys(true);
                         terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
+                            self.view(frame);
                         })?;
 
                         match self.connect_and_load(&config, terminal).await {
-                            Ok(_) => Ok(UpdateResult::Continue),
+                            Ok(_) => {
+                                self.header.update(header::Message::SetConnecting(false));
+                                Ok(UpdateResult::Continue)
+                            }
                             Err(e) => {
+                                self.header.update(header::Message::SetConnecting(false));
                                 self.set_loading_keys(false);
                                 // Show error message and stay on dashboard screen
                                 self.footer.update(footer::Message::Error(Some(format!(
@@ -387,8 +397,7 @@ impl DashboardScreen {
 
                         // Draw progress dialog
                         terminal.draw(|frame| {
-                            let area = frame.area();
-                            self.view(frame, area);
+                            self.view(frame);
                         })?;
 
                         // Execute import
@@ -403,8 +412,7 @@ impl DashboardScreen {
 
                                 // Draw completion message
                                 terminal.draw(|frame| {
-                                    let area = frame.area();
-                                    self.view(frame, area);
+                                    self.view(frame);
                                 })?;
 
                                 self.footer.update(footer::Message::Error(None));
@@ -518,8 +526,7 @@ impl DashboardScreen {
                 self.set_loading_keys(true);
 
                 terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
+                    self.view(frame);
                 })?;
 
                 let pattern = if self.search_box.text.is_empty() {
@@ -548,8 +555,7 @@ impl DashboardScreen {
                 self.set_loading_server_info(true);
 
                 terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
+                    self.view(frame);
                 })?;
 
                 match get_redis_service().get_server_info().await {
@@ -589,7 +595,8 @@ impl DashboardScreen {
         }
     }
 
-    pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn view(&mut self, frame: &mut Frame) {
+        let area = frame.area();
         self.footer
             .update(footer::Message::ViewMode(self.view_mode));
 
@@ -602,7 +609,7 @@ impl DashboardScreen {
             ])
             .split(area);
 
-        self.header.view(frame, chunks[0], false);
+        self.header.view(frame, chunks[0]);
         self.footer.view(frame, chunks[2]);
 
         match self.view_mode {
@@ -765,8 +772,7 @@ impl DashboardScreen {
 
         // Draw loading state
         terminal.draw(|frame| {
-            let area = frame.area();
-            self.view(frame, area);
+            self.view(frame);
         })?;
 
         // Load server information and database list
@@ -845,8 +851,7 @@ impl DashboardScreen {
 
         // Draw progress dialog
         terminal.draw(|frame| {
-            let area = frame.area();
-            self.view(frame, area);
+            self.view(frame);
         })?;
 
         // Generate file name
@@ -877,8 +882,7 @@ impl DashboardScreen {
 
                 // Draw completion message
                 terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
+                    self.view(frame);
                 })?;
 
                 self.footer.update(footer::Message::Error(None));

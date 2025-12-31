@@ -2,12 +2,18 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 
 use crate::models::{ConnectionConfig, Screen};
 use crate::screens::utils::centered_rect_fixed_height;
 use crate::service::get_redis_service;
-use crate::widgets::*;
+use crate::widgets::{
+    ConnectionForm, ConnectionList, Footer, Header, connection_form, connection_list, footer,
+    header,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -28,7 +34,6 @@ pub struct ConnectionScreen {
     pub connection_form: ConnectionForm,
     pub header: Header,
     pub footer: Footer,
-    pub is_connecting: bool,
 }
 
 impl ConnectionScreen {
@@ -41,7 +46,6 @@ impl ConnectionScreen {
             connection_form: ConnectionForm::new(),
             header: Header::new(),
             footer,
-            is_connecting: false,
         }
     }
 
@@ -84,23 +88,26 @@ impl ConnectionScreen {
             }
             Message::List(list_msg) => match self.connection_list.update(list_msg) {
                 connection_list::UpdateResult::Selected(config) => {
-                    self.is_connecting = true;
+                    self.header
+                        .update(header::Message::UpdateConnectionName(Some(
+                            config.name.clone(),
+                        )));
+                    self.header.update(header::Message::SetConnecting(true));
                     self.footer.update(footer::Message::Error(None));
                     terminal.draw(|frame| {
-                        let area = frame.area();
-                        self.view(frame, area);
+                        self.view(frame);
                     })?;
 
                     match get_redis_service().connect(&config).await {
                         Ok(_) => {
-                            self.is_connecting = false;
+                            self.header.update(header::Message::SetConnecting(false));
                             Ok(UpdateResult::SwitchScreen(
                                 Screen::Dashboard,
                                 Box::new(config),
                             ))
                         }
                         Err(e) => {
-                            self.is_connecting = false;
+                            self.header.update(header::Message::SetConnecting(false));
                             self.footer.update(footer::Message::Error(Some(format!(
                                 "Failed to connect: {}",
                                 e
@@ -127,7 +134,8 @@ impl ConnectionScreen {
         }
     }
 
-    pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn view(&mut self, frame: &mut Frame) {
+        let area = frame.area();
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -137,7 +145,7 @@ impl ConnectionScreen {
             ])
             .split(area);
 
-        self.header.view(frame, chunks[0], self.is_connecting);
+        self.header.view(frame, chunks[0]);
         self.footer.view(frame, chunks[2]);
 
         let main_chunks = Layout::default()
@@ -279,23 +287,22 @@ impl ConnectionScreen {
             Ok(_) => {
                 self.footer.update(footer::Message::Error(None));
                 // Auto-connect after import
-                self.is_connecting = true;
+                self.header.update(header::Message::SetConnecting(true));
                 self.footer.update(footer::Message::Error(None));
                 terminal.draw(|frame| {
-                    let area = frame.area();
-                    self.view(frame, area);
+                    self.view(frame);
                 })?;
 
                 match get_redis_service().connect(&new_conn).await {
                     Ok(_) => {
-                        self.is_connecting = false;
+                        self.header.update(header::Message::SetConnecting(false));
                         Ok(UpdateResult::SwitchScreen(
                             Screen::Dashboard,
                             Box::new(new_conn),
                         ))
                     }
                     Err(e) => {
-                        self.is_connecting = false;
+                        self.header.update(header::Message::SetConnecting(false));
                         self.footer.update(footer::Message::Error(Some(format!(
                             "Failed to connect: {}",
                             e
@@ -315,10 +322,6 @@ impl ConnectionScreen {
     }
 
     fn render_content_area(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::style::{Color, Modifier, Style};
-        use ratatui::text::Span;
-        use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
-
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)

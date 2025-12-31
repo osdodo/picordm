@@ -14,6 +14,7 @@ pub enum Message {
     UpdateConnectionName(Option<String>),
     UpdateServerInfo(Option<ServerInfo>),
     SetLoadingServerInfo(bool),
+    SetConnecting(bool),
 }
 
 #[derive(Clone)]
@@ -21,6 +22,7 @@ pub struct Header {
     pub connection_name: Option<String>,
     pub server_info: Option<ServerInfo>,
     pub is_loading_server_info: bool,
+    pub is_connecting: bool,
 }
 
 impl Header {
@@ -29,6 +31,7 @@ impl Header {
             connection_name: None,
             server_info: None,
             is_loading_server_info: false,
+            is_connecting: false,
         }
     }
 
@@ -44,13 +47,16 @@ impl Header {
             Message::SetLoadingServerInfo(loading) => {
                 self.is_loading_server_info = loading;
             }
+            Message::SetConnecting(connecting) => {
+                self.is_connecting = connecting;
+            }
         }
     }
 
-    pub fn view(&self, frame: &mut Frame, area: Rect, is_connecting: bool) {
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
         let mut spans = vec![];
 
-        if is_connecting {
+        if self.is_connecting {
             if let Some(conn_name) = &self.connection_name {
                 spans.extend(vec![
                     Span::styled("Connecting to ", Style::default().fg(Color::Yellow)),

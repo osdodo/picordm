@@ -44,14 +44,12 @@ impl App {
     }
 
     fn view(&mut self, frame: &mut Frame) {
-        let area = frame.area();
-
         match self.current_screen {
             Screen::Connection => {
-                self.connection_screen.view(frame, area);
+                self.connection_screen.view(frame);
             }
             Screen::Dashboard => {
-                self.dashboard_screen.view(frame, area);
+                self.dashboard_screen.view(frame);
             }
         }
     }
@@ -71,16 +69,20 @@ impl App {
                     && let connection_screen::UpdateResult::SwitchScreen(screen, config) =
                         self.connection_screen.update(msg, terminal).await?
                 {
-                    if let Err(e) = self.dashboard_screen.load_data(&config, terminal).await {
-                        self.connection_screen
-                            .footer
-                            .update(footer::Message::Error(Some(format!(
-                                "Failed to load dashboard: {}",
-                                e
-                            ))));
-                        return Ok(true);
+                    match self.dashboard_screen.load_data(&config, terminal).await {
+                        Err(e) => {
+                            self.connection_screen
+                                .footer
+                                .update(footer::Message::Error(Some(format!(
+                                    "Failed to load dashboard: {}",
+                                    e
+                                ))));
+                            return Ok(true);
+                        }
+                        Ok(_) => {
+                            self.current_screen = screen;
+                        }
                     }
-                    self.current_screen = screen;
                 }
             }
             Screen::Dashboard => {
