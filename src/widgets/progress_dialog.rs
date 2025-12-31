@@ -1,10 +1,12 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
+
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -64,10 +66,12 @@ impl ProgressDialog {
             return;
         }
 
+        let colors = get_colors();
+
         let title_color = if self.is_complete {
-            Color::Green
+            colors.success
         } else {
-            Color::Rgb(147, 112, 219)
+            colors.active_border
         };
 
         let block = Block::default()
@@ -80,7 +84,7 @@ impl ProgressDialog {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(title_color))
-            .style(Style::default().bg(Color::Rgb(25, 25, 35)));
+            .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
 
@@ -116,9 +120,9 @@ impl ProgressDialog {
                             if message_lower.contains("exported")
                                 || message_lower.contains("imported")
                             {
-                                Color::Green
+                                colors.success
                             } else {
-                                Color::Red
+                                colors.error_dark
                             },
                         )
                         .add_modifier(Modifier::BOLD),
@@ -129,7 +133,7 @@ impl ProgressDialog {
                 Line::from(""),
                 Line::from(Span::styled(
                     &self.message,
-                    Style::default().fg(Color::White),
+                    Style::default().fg(colors.text_primary),
                 )),
             ]
         };
@@ -140,27 +144,25 @@ impl ProgressDialog {
 
         // Show error details or hint
         if !self.error_details.is_empty() {
-            let mut error_lines = vec![Line::from(vec![
-                Span::styled(
-                    "Failed keys: ",
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])];
+            let mut error_lines = vec![Line::from(vec![Span::styled(
+                "Failed keys: ",
+                Style::default()
+                    .fg(colors.error_dark)
+                    .add_modifier(Modifier::BOLD),
+            )])];
 
             // Show up to 5 failed keys
             for error in self.error_details.iter().take(5) {
                 error_lines.push(Line::from(vec![
-                    Span::styled("  • ", Style::default().fg(Color::Red)),
-                    Span::styled(error, Style::default().fg(Color::Yellow)),
+                    Span::styled("  • ", Style::default().fg(colors.error_dark)),
+                    Span::styled(error, Style::default().fg(colors.error)),
                 ]));
             }
 
             if self.error_details.len() > 5 {
                 error_lines.push(Line::from(vec![Span::styled(
                     format!("  ... and {} more", self.error_details.len() - 5),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(colors.text_secondary),
                 )]));
             }
 
@@ -170,14 +172,14 @@ impl ProgressDialog {
             frame.render_widget(error_widget, chunks[1]);
         } else if self.is_complete {
             let hint_widget = Paragraph::new(Line::from(vec![
-                Span::styled("Press ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Press ", Style::default().fg(colors.text_secondary)),
                 Span::styled(
                     "Esc",
                     Style::default()
-                        .fg(Color::White)
+                        .fg(colors.text_primary)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" to close", Style::default().fg(Color::DarkGray)),
+                Span::styled(" to close", Style::default().fg(colors.text_secondary)),
             ]))
             .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(hint_widget, chunks[1]);

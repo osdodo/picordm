@@ -1,13 +1,14 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 use super::format::{format_bytes, format_uptime};
 use crate::models::ServerInfo;
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -54,24 +55,25 @@ impl Header {
     }
 
     pub fn view(&self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
         let mut spans = vec![];
 
         if self.is_connecting {
             if let Some(conn_name) = &self.connection_name {
                 spans.extend(vec![
-                    Span::styled("Connecting to ", Style::default().fg(Color::Yellow)),
+                    Span::styled("Connecting to ", Style::default().fg(colors.cyan)),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
-                            .fg(Color::Yellow)
+                            .fg(colors.cyan)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(" ...", Style::default().fg(Color::Yellow)),
+                    Span::styled(" ...", Style::default().fg(colors.cyan)),
                 ]);
             } else {
                 spans.push(Span::styled(
                     "Connecting...",
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(colors.cyan),
                 ));
             }
         } else if let Some(conn_name) = &self.connection_name {
@@ -80,39 +82,48 @@ impl Header {
                 let memory = format_bytes(info.used_memory);
 
                 spans.extend(vec![
-                    Span::styled("Connection: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        "Connection: ",
+                        Style::default().fg(colors.text_secondary),
+                    ),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
-                            .fg(Color::Green)
+                            .fg(colors.success)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw("  |  "),
-                    Span::styled("Uptime: ", Style::default().fg(Color::Gray)),
-                    Span::styled(uptime, Style::default().fg(Color::Yellow)),
-                    Span::raw("  |  "),
-                    Span::styled("Clients: ", Style::default().fg(Color::Gray)),
+                    Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
+                    Span::styled("Uptime: ", Style::default().fg(colors.text_secondary)),
+                    Span::styled(uptime, Style::default().fg(colors.cyan)),
+                    Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
+                    Span::styled(
+                        "Clients: ",
+                        Style::default().fg(colors.text_secondary),
+                    ),
                     Span::styled(
                         format!("{}", info.connected_clients),
-                        Style::default().fg(Color::Rgb(147, 112, 219)),
+                        Style::default().fg(colors.accent),
                     ),
-                    Span::raw("  |  "),
-                    Span::styled("Keys: ", Style::default().fg(Color::Gray)),
+                    Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
+                    Span::styled("Keys: ", Style::default().fg(colors.text_secondary)),
                     Span::styled(
                         format!("{}", info.total_keys),
-                        Style::default().fg(Color::Magenta),
+                        Style::default().fg(colors.key),
                     ),
-                    Span::raw("  |  "),
-                    Span::styled("Memory: ", Style::default().fg(Color::Gray)),
-                    Span::styled(memory, Style::default().fg(Color::Green)),
+                    Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
+                    Span::styled("Memory: ", Style::default().fg(colors.text_secondary)),
+                    Span::styled(memory, Style::default().fg(colors.success)),
                 ]);
             } else {
                 spans.extend(vec![
-                    Span::styled("Connection: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        "Connection: ",
+                        Style::default().fg(colors.text_secondary),
+                    ),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
-                            .fg(Color::Green)
+                            .fg(colors.success)
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]);
@@ -120,14 +131,17 @@ impl Header {
 
             if self.is_loading_server_info {
                 spans.extend(vec![
-                    Span::raw("  |  "),
-                    Span::styled("Loading server info...", Style::default().fg(Color::Yellow)),
+                    Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
+                    Span::styled(
+                        "Loading server info...",
+                        Style::default().fg(colors.cyan),
+                    ),
                 ]);
             }
         } else {
             spans.push(Span::styled(
                 "Not connected - Please select a connection from the list",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(colors.text_secondary),
             ));
         }
 
@@ -136,7 +150,7 @@ impl Header {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(80, 90, 110))),
+                    .border_style(Style::default().fg(colors.inactive_border)),
             )
             .alignment(ratatui::layout::Alignment::Left);
 

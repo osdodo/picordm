@@ -4,17 +4,14 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::models::ConnectionConfig;
-
-const ACTIVE_BORDER_COLOR: Color = Color::Rgb(147, 112, 219);
-const INACTIVE_BORDER_COLOR: Color = Color::Rgb(80, 90, 110);
-const REQUIRED_COLOR: Color = Color::LightRed;
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FormField {
@@ -177,6 +174,8 @@ impl ConnectionForm {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) -> Option<(u16, u16)> {
+        let colors = get_colors();
+
         let title = if self.editing_connection_id.is_some() {
             "Edit Redis Connection"
         } else {
@@ -187,12 +186,13 @@ impl ConnectionForm {
             .title(Line::from(vec![Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(80, 90, 110)));
+            .border_style(Style::default().fg(colors.inactive_border))
+            .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
 
@@ -678,6 +678,8 @@ impl ConnectionForm {
     }
 
     fn render_mode_tabs(&self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let tab_area = Rect {
             x: area.x,
             y: area.y,
@@ -687,18 +689,18 @@ impl ConnectionForm {
 
         let standalone_style = if !self.is_cluster {
             Style::default()
-                .fg(ACTIVE_BORDER_COLOR)
+                .fg(colors.active_border)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(colors.text_secondary)
         };
 
         let cluster_style = if self.is_cluster {
             Style::default()
-                .fg(ACTIVE_BORDER_COLOR)
+                .fg(colors.active_border)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(colors.text_secondary)
         };
 
         let tabs = Line::from(vec![
@@ -709,7 +711,7 @@ impl ConnectionForm {
             Span::styled(
                 "(Press Tab to switch)",
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(colors.text_secondary)
                     .add_modifier(Modifier::DIM),
             ),
         ]);
@@ -832,22 +834,23 @@ impl ConnectionForm {
         if has_error {
             idx += 1; // Skip spacer
             if let Some(ref error) = self.validation_error {
+                let colors = get_colors();
                 let error_text = Paragraph::new(Line::from(vec![
                     Span::styled(
                         "⚠ ",
                         Style::default()
-                            .fg(Color::LightRed)
+                            .fg(colors.error)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(error, Style::default().fg(Color::LightRed)),
+                    Span::styled(error, Style::default().fg(colors.error)),
                 ]))
                 .alignment(ratatui::layout::Alignment::Center)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(Color::LightRed))
-                        .style(Style::default().bg(Color::Rgb(50, 20, 20))),
+                        .border_style(Style::default().fg(colors.error))
+                        .style(Style::default().bg(colors.bg_error)),
                 );
                 frame.render_widget(error_text, chunks[idx]);
             }
@@ -965,17 +968,18 @@ impl ConnectionForm {
         hint: Option<&str>,
         placeholder: &str,
     ) -> Option<(u16, u16)> {
+        let colors = get_colors();
         let is_active = self.editing_field == field;
         let border_color = if is_active {
-            ACTIVE_BORDER_COLOR
+            colors.active_border
         } else {
-            INACTIVE_BORDER_COLOR
+            colors.inactive_border
         };
 
         let title_color = if is_active {
-            ACTIVE_BORDER_COLOR
+            colors.active_border
         } else {
-            Color::White
+            colors.text_primary
         };
 
         let mut title_spans = vec![Span::styled(
@@ -989,7 +993,7 @@ impl ConnectionForm {
             title_spans.push(Span::styled(
                 " *",
                 Style::default()
-                    .fg(REQUIRED_COLOR)
+                    .fg(colors.required)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -1009,10 +1013,10 @@ impl ConnectionForm {
 
         let value_style = if value.is_empty() && !is_active {
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(colors.text_disabled)
                 .add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(colors.text_primary)
         };
 
         let widget = Paragraph::new(display_value).style(value_style).block(
@@ -1041,17 +1045,18 @@ impl ConnectionForm {
         checked: bool,
         field: FormField,
     ) {
+        let colors = get_colors();
         let is_active = self.editing_field == field;
         let border_color = if is_active {
-            ACTIVE_BORDER_COLOR
+            colors.active_border
         } else {
-            INACTIVE_BORDER_COLOR
+            colors.inactive_border
         };
 
         let title_color = if is_active {
-            ACTIVE_BORDER_COLOR
+            colors.active_border
         } else {
-            Color::White
+            colors.text_primary
         };
 
         let title_span = Line::from(vec![Span::styled(
@@ -1066,15 +1071,15 @@ impl ConnectionForm {
                 Span::styled(
                     "✓ ",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(colors.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("Enabled", Style::default().fg(Color::Green)),
+                Span::styled("Enabled", Style::default().fg(colors.success)),
             ])
         } else {
             Line::from(vec![
-                Span::styled("○ ", Style::default().fg(Color::DarkGray)),
-                Span::styled("Disabled", Style::default().fg(Color::DarkGray)),
+                Span::styled("○ ", Style::default().fg(colors.text_secondary)),
+                Span::styled("Disabled", Style::default().fg(colors.text_secondary)),
             ])
         };
 

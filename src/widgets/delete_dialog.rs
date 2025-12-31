@@ -2,10 +2,12 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
+
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -53,17 +55,19 @@ impl DeleteDialog {
             return;
         }
 
+        let colors = get_colors();
+
         let block = Block::default()
             .title(Line::from(vec![Span::styled(
                 "⚠ Confirm Delete",
                 Style::default()
-                    .fg(Color::LightRed)
+                    .fg(colors.error)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::LightRed))
-            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+            .border_style(Style::default().fg(colors.error))
+            .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
 
@@ -89,12 +93,12 @@ impl DeleteDialog {
             Line::from(Span::styled(
                 message,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
                 "This action cannot be undone.",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(colors.error),
             )),
         ])
         .alignment(ratatui::layout::Alignment::Center);
@@ -105,17 +109,20 @@ impl DeleteDialog {
             Span::styled(
                 "[y]",
                 Style::default()
-                    .fg(Color::LightRed)
+                    .fg(colors.error)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" Yes, delete  ", Style::default().fg(Color::White)),
+            Span::styled(
+                " Yes, delete  ",
+                Style::default().fg(colors.text_primary),
+            ),
             Span::styled(
                 "[n/Esc]",
                 Style::default()
-                    .fg(Color::Rgb(147, 112, 219))
+                    .fg(colors.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" Cancel", Style::default().fg(Color::White)),
+            Span::styled(" Cancel", Style::default().fg(colors.text_primary)),
         ]))
         .alignment(ratatui::layout::Alignment::Center);
 

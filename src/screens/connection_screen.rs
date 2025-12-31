@@ -2,17 +2,23 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::models::{ConnectionConfig, Screen};
-use crate::screens::utils::centered_rect_fixed_height;
+use crate::screens::utils::{centered_rect_fixed_height, render_background};
 use crate::service::get_redis_service;
+use crate::theme::get_colors;
 use crate::widgets::{
-    ConnectionForm, ConnectionList, Footer, Header, connection_form, connection_list, footer,
-    header,
+    connection_form,
+    connection_list,
+    footer::{self, Footer},
+    header::{self, Header},
+};
+use crate::{
+    models::{ConnectionConfig, Screen},
+    screens::utils::draw_with_background,
 };
 
 #[derive(Debug, Clone)]
@@ -31,7 +37,7 @@ pub enum UpdateResult {
 
 pub struct ConnectionScreen {
     pub connection_list: connection_list::ConnectionList,
-    pub connection_form: ConnectionForm,
+    pub connection_form: connection_form::ConnectionForm,
     pub header: Header,
     pub footer: Footer,
 }
@@ -42,8 +48,8 @@ impl ConnectionScreen {
         footer.update(footer::Message::Screen(Screen::Connection));
 
         Self {
-            connection_list: ConnectionList::new(),
-            connection_form: ConnectionForm::new(),
+            connection_list: connection_list::ConnectionList::new(),
+            connection_form: connection_form::ConnectionForm::new(),
             header: Header::new(),
             footer,
         }
@@ -94,9 +100,7 @@ impl ConnectionScreen {
                         )));
                     self.header.update(header::Message::SetConnecting(true));
                     self.footer.update(footer::Message::Error(None));
-                    terminal.draw(|frame| {
-                        self.view(frame);
-                    })?;
+                    draw_with_background(terminal, |frame| self.view(frame))?;
 
                     match get_redis_service().connect(&config).await {
                         Ok(_) => {
@@ -136,6 +140,10 @@ impl ConnectionScreen {
 
     pub fn view(&mut self, frame: &mut Frame) {
         let area = frame.area();
+
+        // Set background color for the entire frame
+        render_background(frame, area);
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -167,7 +175,7 @@ impl ConnectionScreen {
                 27
             };
             let form_area = centered_rect_fixed_height(60, form_height, area);
-            frame.render_widget(ratatui::widgets::Clear, form_area);
+            frame.render_widget(Clear, form_area);
             self.connection_form.view(frame, form_area);
         }
     }
@@ -219,7 +227,8 @@ impl ConnectionScreen {
         }
 
         // Parse connection string
-        let mut form = match ConnectionForm::from_connection_string(clipboard_text) {
+        let mut form = match connection_form::ConnectionForm::from_connection_string(clipboard_text)
+        {
             Ok(form) => form,
             Err(e) => {
                 self.footer.update(footer::Message::Error(Some(e)));
@@ -289,9 +298,7 @@ impl ConnectionScreen {
                 // Auto-connect after import
                 self.header.update(header::Message::SetConnecting(true));
                 self.footer.update(footer::Message::Error(None));
-                terminal.draw(|frame| {
-                    self.view(frame);
-                })?;
+                draw_with_background(terminal, |frame| self.view(frame))?;
 
                 match get_redis_service().connect(&new_conn).await {
                     Ok(_) => {
@@ -322,24 +329,29 @@ impl ConnectionScreen {
     }
 
     fn render_content_area(&self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+            .border_style(Style::default().fg(colors.inactive_border))
             .title(Span::styled(
                 "View",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
 
         // Show error message or default prompt
         let content = if let Some(err) = &self.footer.error_message {
-            Span::styled(format!("Error: {}", err), Style::default().fg(Color::Red))
+            Span::styled(
+                format!("Error: {}", err),
+                Style::default().fg(colors.error_dark),
+            )
         } else {
             Span::styled(
                 "Select a connection to start",
-                Style::default().fg(Color::White),
+                Style::default().fg(colors.text_primary),
             )
         };
 

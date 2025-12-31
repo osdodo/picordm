@@ -4,10 +4,12 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
 };
+
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -73,14 +75,16 @@ impl KeyList {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+        let colors = get_colors();
+
         let border_color = if is_focused {
-            Color::Rgb(147, 112, 219)
+            colors.active_border
         } else {
-            Color::Rgb(80, 90, 110)
+            colors.inactive_border
         };
 
         if self.is_loading {
-            let loading_text = Span::styled("Loading keys...", Style::default().fg(Color::Yellow));
+            let loading_text = Span::styled("Loading keys...", Style::default().fg(colors.cyan));
             let loading_widget = Paragraph::new(loading_text)
                 .alignment(ratatui::layout::Alignment::Center)
                 .block(
@@ -91,7 +95,7 @@ impl KeyList {
                         .title(Span::styled(
                             "Keys",
                             Style::default()
-                                .fg(Color::White)
+                                .fg(colors.text_primary)
                                 .add_modifier(Modifier::BOLD),
                         )),
                 );
@@ -108,17 +112,17 @@ impl KeyList {
                     Span::styled(
                         "[✓] ",
                         Style::default()
-                            .fg(Color::Green)
+                            .fg(colors.success)
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
-                    Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
+                    Span::styled("[ ] ", Style::default().fg(colors.text_secondary))
                 };
 
                 let key_style = if is_selected {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(colors.success)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(colors.text_primary)
                 };
 
                 ListItem::new(Line::from(vec![checkbox, Span::styled(key, key_style)]))
@@ -145,14 +149,14 @@ impl KeyList {
                     .title(Span::styled(
                         keys_title,
                         Style::default()
-                            .fg(Color::White)
+                            .fg(colors.text_primary)
                             .add_modifier(Modifier::BOLD),
                     )),
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::Rgb(34, 36, 64))
-                    .fg(Color::White)
+                    .bg(colors.bg_highlight)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">> ");

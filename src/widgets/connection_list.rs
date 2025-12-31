@@ -2,12 +2,13 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState},
 };
 
 use crate::models::ConnectionConfig;
+use crate::theme::get_colors;
 use crate::widgets::connection_storage::{load_connections, save_connections};
 
 #[derive(Debug, Clone)]
@@ -47,9 +48,7 @@ impl ConnectionList {
             (KeyCode::Char('j') | KeyCode::Down, _) => Some(Message::Next),
             (KeyCode::Char('k') | KeyCode::Up, _) => Some(Message::Previous),
             (KeyCode::Enter, _) => Some(Message::Select),
-            (KeyCode::Char('d'), _) | (KeyCode::Backspace, _) | (KeyCode::Delete, _) => {
-                Some(Message::Delete)
-            }
+            (KeyCode::Backspace, _) | (KeyCode::Delete, _) => Some(Message::Delete),
             (KeyCode::Char('e'), _) => Some(Message::Edit),
             _ => None,
         }
@@ -90,6 +89,8 @@ impl ConnectionList {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+        
         let items: Vec<ListItem> = self
             .connections
             .iter()
@@ -97,12 +98,12 @@ impl ConnectionList {
                 let name_span = Span::styled(
                     &conn.name,
                     Style::default()
-                        .fg(Color::White)
+                        .fg(colors.text_primary)
                         .add_modifier(Modifier::BOLD),
                 );
 
                 let cluster_span = if conn.is_cluster {
-                    Span::styled(" [Cluster]", Style::default().fg(Color::Cyan))
+                    Span::styled(" [Cluster]", Style::default().fg(colors.directory))
                 } else {
                     Span::raw("")
                 };
@@ -116,18 +117,18 @@ impl ConnectionList {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
+                    .border_style(Style::default().fg(colors.active_border))
                     .title(Span::styled(
                         format!("Redis Connections ({})", self.connections.len()),
                         Style::default()
-                            .fg(Color::White)
+                            .fg(colors.text_primary)
                             .add_modifier(Modifier::BOLD),
                     )),
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::Rgb(147, 112, 219))
-                    .fg(Color::Black)
+                    .bg(colors.highlight_bg)
+                    .fg(colors.text_on_highlight)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▶ ");

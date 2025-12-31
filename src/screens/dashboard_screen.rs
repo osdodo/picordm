@@ -3,16 +3,29 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
+    widgets::Clear,
 };
 
 use crate::models::{DbInfo, Screen, ServerInfo, ViewMode};
-use crate::screens::{impex, utils::centered_rect_fixed_height};
+use crate::screens::{
+    impex,
+    utils::{centered_rect_fixed_height, draw_with_background, render_background},
+};
 use crate::service::get_redis_service;
+use crate::theme::get_colors;
 use crate::widgets::{
-    CommandMode, ConnectionSwitcher, DbSelector, DeleteDialog, FileSelector, Footer, Header,
-    KeyContentEditor, KeyList, ProgressDialog, SearchBox, command_mode, connection_storage,
-    db_selector, delete_dialog, file_selector, footer, header, key_content_editor, key_list,
-    progress_dialog, search_box,
+    command_mode::{self, CommandMode},
+    connection_storage,
+    connection_switcher::ConnectionSwitcher,
+    db_selector::{self, DbSelector},
+    delete_dialog::{self, DeleteDialog},
+    file_selector::{self, FileSelector},
+    footer::{self, Footer},
+    header::{self, Header},
+    key_content_editor::{self, KeyContentEditor},
+    key_list::{self, KeyList},
+    progress_dialog::{self, ProgressDialog},
+    search_box::{self, SearchBox},
 };
 
 #[derive(Debug, Clone)]
@@ -197,10 +210,7 @@ impl DashboardScreen {
                         // LoadKeyValue action
                         self.view_mode = ViewMode::KeyContent;
                         self.key_content_editor.set_loading_value(true);
-
-                        terminal.draw(|frame| {
-                            self.view(frame);
-                        })?;
+                        draw_with_background(terminal, |frame| self.view(frame))?;
 
                         let db_index = self.get_current_db_index();
                         match get_redis_service().get_value(&key, db_index).await {
@@ -247,9 +257,7 @@ impl DashboardScreen {
                         // SwitchDatabase action
                         self.set_loading_keys(true);
 
-                        terminal.draw(|frame| {
-                            self.view(frame);
-                        })?;
+                        draw_with_background(terminal, |frame| self.view(frame))?;
 
                         let pattern = if self.search_box.text.is_empty() {
                             "*".to_string()
@@ -297,9 +305,7 @@ impl DashboardScreen {
                                     format!("Deleting {} keys...", keys_to_delete.len()),
                                 ));
 
-                                terminal.draw(|frame| {
-                                    self.view(frame);
-                                })?;
+                                draw_with_background(terminal, |frame| self.view(frame))?;
 
                                 for key in &keys_to_delete {
                                     let _ = get_redis_service().delete_key(key, db_index).await;
@@ -356,9 +362,7 @@ impl DashboardScreen {
                             )));
                         self.header.update(header::Message::SetConnecting(true));
                         self.set_loading_keys(true);
-                        terminal.draw(|frame| {
-                            self.view(frame);
-                        })?;
+                        draw_with_background(terminal, |frame| self.view(frame))?;
 
                         match self.connect_and_load(&config, terminal).await {
                             Ok(_) => {
@@ -396,29 +400,30 @@ impl DashboardScreen {
                         ));
 
                         // Draw progress dialog
-                        terminal.draw(|frame| {
-                            self.view(frame);
-                        })?;
+                        draw_with_background(terminal, |frame| self.view(frame))?;
 
                         // Execute import
                         let db_index = self.get_current_db_index();
                         match impex::import_redis_data(&path, db_index, false).await {
                             Ok(result) => {
-                                let mut message = format!(
-                                    "Successfully imported {} keys",
-                                    result.imported_count
-                                );
+                                let mut message =
+                                    format!("Successfully imported {} keys", result.imported_count);
                                 if result.skipped_count > 0 {
-                                    message.push_str(&format!(", {} skipped", result.skipped_count));
+                                    message
+                                        .push_str(&format!(", {} skipped", result.skipped_count));
                                 }
                                 if !result.failed_keys.is_empty() {
-                                    message.push_str(&format!(", {} failed", result.failed_keys.len()));
+                                    message.push_str(&format!(
+                                        ", {} failed",
+                                        result.failed_keys.len()
+                                    ));
                                 }
 
                                 // Show error details in dialog if there are failed keys
                                 let error_list = if !result.failed_keys.is_empty() {
                                     Some(
-                                        result.failed_keys
+                                        result
+                                            .failed_keys
                                             .iter()
                                             .map(|(k, e)| format!("{}: {}", k, e))
                                             .collect(),
@@ -427,12 +432,13 @@ impl DashboardScreen {
                                     None
                                 };
                                 self.progress_dialog
-                                    .update(progress_dialog::Message::Complete(message.clone(), error_list));
+                                    .update(progress_dialog::Message::Complete(
+                                        message.clone(),
+                                        error_list,
+                                    ));
 
                                 // Draw completion message
-                                terminal.draw(|frame| {
-                                    self.view(frame);
-                                })?;
+                                draw_with_background(terminal, |frame| self.view(frame))?;
 
                                 // Refresh server information and database list
                                 if let Ok((info, db_list)) =
@@ -542,9 +548,7 @@ impl DashboardScreen {
                 // RefreshKeys action
                 self.set_loading_keys(true);
 
-                terminal.draw(|frame| {
-                    self.view(frame);
-                })?;
+                draw_with_background(terminal, |frame| self.view(frame))?;
 
                 let pattern = if self.search_box.text.is_empty() {
                     "*".to_string()
@@ -571,9 +575,7 @@ impl DashboardScreen {
                 // RefreshServerInfo action
                 self.set_loading_server_info(true);
 
-                terminal.draw(|frame| {
-                    self.view(frame);
-                })?;
+                draw_with_background(terminal, |frame| self.view(frame))?;
 
                 match get_redis_service().get_server_info().await {
                     Ok((info, db_list)) => {
@@ -614,6 +616,10 @@ impl DashboardScreen {
 
     pub fn view(&mut self, frame: &mut Frame) {
         let area = frame.area();
+
+        // Set background color for the entire frame
+        render_background(frame, area);
+
         self.footer
             .update(footer::Message::ViewMode(self.view_mode));
 
@@ -674,13 +680,13 @@ impl DashboardScreen {
     fn render_dialogs(&mut self, frame: &mut Frame, area: Rect) {
         if self.delete_dialog.is_open {
             let popup_area = centered_rect_fixed_height(60, 8, area);
-            frame.render_widget(ratatui::widgets::Clear, popup_area);
+            frame.render_widget(Clear, popup_area);
             self.delete_dialog.view(frame, popup_area);
         }
 
         if self.progress_dialog.is_visible {
             let popup_area = centered_rect_fixed_height(60, 8, area);
-            frame.render_widget(ratatui::widgets::Clear, popup_area);
+            frame.render_widget(Clear, popup_area);
             self.progress_dialog.view(frame, popup_area);
         }
 
@@ -689,13 +695,13 @@ impl DashboardScreen {
             let list_height = (connections_count as u16).min(12);
             let popup_height = list_height + 5;
             let popup_area = centered_rect_fixed_height(70, popup_height, area);
-            frame.render_widget(ratatui::widgets::Clear, popup_area);
+            frame.render_widget(Clear, popup_area);
             self.connection_switcher.view(frame, popup_area);
         }
 
         if self.file_selector.is_open {
             let popup_area = centered_rect_fixed_height(70, 18, area);
-            frame.render_widget(ratatui::widgets::Clear, popup_area);
+            frame.render_widget(Clear, popup_area);
             self.file_selector.view(frame, popup_area);
         }
     }
@@ -723,18 +729,18 @@ impl DashboardScreen {
     }
 
     fn render_content_area(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::style::{Modifier, Style};
         use ratatui::text::Span;
         use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(80, 90, 110)))
+            .border_style(Style::default().fg(get_colors().inactive_border))
             .title(Span::styled(
                 "View",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(get_colors().text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
 
@@ -742,7 +748,7 @@ impl DashboardScreen {
             Paragraph::new("Select a key to view its value or press '>' to execute a command")
                 .block(block)
                 .wrap(Wrap { trim: true })
-                .style(Style::default().fg(Color::DarkGray));
+                .style(Style::default().fg(get_colors().text_secondary));
         frame.render_widget(paragraph, area);
     }
 
@@ -787,10 +793,8 @@ impl DashboardScreen {
         self.set_loading_server_info(true);
         self.set_loading_keys(true);
 
-        // Draw loading state
-        terminal.draw(|frame| {
-            self.view(frame);
-        })?;
+        // Draw loading state with proper background
+        draw_with_background(terminal, |frame| self.view(frame))?;
 
         // Load server information and database list
         if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
@@ -867,9 +871,7 @@ impl DashboardScreen {
         ));
 
         // Draw progress dialog
-        terminal.draw(|frame| {
-            self.view(frame);
-        })?;
+        draw_with_background(terminal, |frame| self.view(frame))?;
 
         // Generate file name
         let file_name = format!(
@@ -891,10 +893,8 @@ impl DashboardScreen {
                     "current directory"
                 };
 
-                let mut message = format!(
-                    "Exported {} keys to {}",
-                    result.exported_count, location
-                );
+                let mut message =
+                    format!("Exported {} keys to {}", result.exported_count, location);
                 if !result.failed_keys.is_empty() {
                     message.push_str(&format!(", {} failed", result.failed_keys.len()));
                 }
@@ -902,7 +902,8 @@ impl DashboardScreen {
                 // Show error details in dialog if there are failed keys
                 let error_list = if !result.failed_keys.is_empty() {
                     Some(
-                        result.failed_keys
+                        result
+                            .failed_keys
                             .iter()
                             .map(|(k, e)| format!("{}: {}", k, e))
                             .collect(),
@@ -911,12 +912,13 @@ impl DashboardScreen {
                     None
                 };
                 self.progress_dialog
-                    .update(progress_dialog::Message::Complete(message.clone(), error_list));
+                    .update(progress_dialog::Message::Complete(
+                        message.clone(),
+                        error_list,
+                    ));
 
                 // Draw completion message
-                terminal.draw(|frame| {
-                    self.view(frame);
-                })?;
+                draw_with_background(terminal, |frame| self.view(frame))?;
 
                 // Wait for a moment to let the user see the completion message
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

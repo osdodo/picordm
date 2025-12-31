@@ -2,12 +2,13 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::models::DbInfo;
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -87,6 +88,8 @@ impl DbSelector {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+        
         let display_text = if self.db_list.is_empty() {
             format!("db{}", self.current_db_index)
         } else {
@@ -100,9 +103,9 @@ impl DbSelector {
         };
 
         let border_color = if self.is_open {
-            Color::Rgb(147, 112, 219)
+            colors.active_border
         } else {
-            Color::Rgb(80, 90, 110)
+            colors.inactive_border
         };
 
         let title = if self.is_open {
@@ -112,7 +115,7 @@ impl DbSelector {
         };
 
         let selector_widget = Paragraph::new(display_text)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(colors.text_primary))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -121,7 +124,7 @@ impl DbSelector {
                     .title(Span::styled(
                         title,
                         Style::default()
-                            .fg(Color::White)
+                            .fg(colors.text_primary)
                             .add_modifier(Modifier::BOLD),
                     )),
             );
@@ -134,6 +137,8 @@ impl DbSelector {
     }
 
     fn render_dropdown(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+        
         let dropdown_height = (self.db_list.len() as u16 + 2).min(10);
         let dropdown_y = if area.y >= dropdown_height {
             area.y.saturating_sub(dropdown_height)
@@ -154,11 +159,13 @@ impl DbSelector {
                 let display = format!("db{} ({} keys)", db.index, db.keys_count);
                 let style = if db.index == self.current_db_index {
                     Style::default()
-                        .fg(Color::Green)
-                        .bg(Color::Rgb(30, 30, 40))
+                        .fg(colors.success)
+                        .bg(colors.bg_dialog)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White).bg(Color::Rgb(30, 30, 40))
+                    Style::default()
+                        .fg(colors.text_primary)
+                        .bg(colors.bg_dialog)
                 };
                 ListItem::new(display).style(style)
             })
@@ -169,13 +176,13 @@ impl DbSelector {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
-                    .style(Style::default().bg(Color::Rgb(30, 30, 40))),
+                    .border_style(Style::default().fg(colors.active_border))
+                    .style(Style::default().bg(colors.bg_dialog)),
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::Rgb(50, 50, 70))
-                    .fg(Color::White)
+                    .bg(colors.bg_selected)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol(">> ");

@@ -2,11 +2,13 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
+
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -63,9 +65,9 @@ impl SearchBox {
 
     pub fn view(&self, frame: &mut Frame, area: Rect) -> Option<(u16, u16)> {
         let border_color = if self.is_focused {
-            Color::Rgb(147, 112, 219)
+            get_colors().active_border
         } else {
-            Color::Rgb(80, 90, 110)
+            get_colors().inactive_border
         };
 
         let title = if self.is_focused {
@@ -78,11 +80,11 @@ impl SearchBox {
             Span::styled(
                 "...",
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(get_colors().text_secondary)
                     .add_modifier(Modifier::DIM),
             )
         } else {
-            Span::styled(&self.text, Style::default().fg(Color::White))
+            Span::styled(&self.text, Style::default().fg(get_colors().text_primary))
         };
 
         let search_input = Paragraph::new(Line::from(vec![display])).block(
@@ -93,7 +95,7 @@ impl SearchBox {
                 .title(Span::styled(
                     title,
                     Style::default()
-                        .fg(Color::White)
+                        .fg(get_colors().text_primary)
                         .add_modifier(Modifier::BOLD),
                 )),
         );

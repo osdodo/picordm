@@ -2,12 +2,13 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
 };
 
 use crate::models::ConnectionConfig;
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -173,13 +174,13 @@ impl ConnectionSwitcher {
             .title(Line::from(vec![Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::Rgb(147, 112, 219))
+                    .fg(get_colors().accent)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
-            .style(Style::default().bg(Color::Rgb(30, 30, 40)));
+            .border_style(Style::default().fg(get_colors().active_border))
+            .style(Style::default().bg(get_colors().bg_list_item));
         frame.render_widget(block, area);
 
         let inner = area.inner(ratatui::layout::Margin {
@@ -200,15 +201,15 @@ impl ConnectionSwitcher {
             if is_filtering {
                 Span::styled(
                     format!("Search: {}", self.search),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(get_colors().text_primary),
                 )
             } else {
-                Span::styled("Search: ", Style::default().fg(Color::DarkGray))
+                Span::styled("Search: ", Style::default().fg(get_colors().text_secondary))
             }
         } else {
             Span::styled(
                 "Press '/' to search...",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(get_colors().text_secondary),
             )
         };
         frame.render_widget(Paragraph::new(Line::from(vec![search_text])), chunks[0]);
@@ -225,10 +226,10 @@ impl ConnectionSwitcher {
 
                 let name_style = if is_current {
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(get_colors().success)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(get_colors().text_primary)
                 };
 
                 let mut spans = vec![];
@@ -237,9 +238,9 @@ impl ConnectionSwitcher {
                 if !is_filtering {
                     let num_str = format!("{:2} ", original_idx + 1);
                     let num_style = if *original_idx < 9 {
-                        Style::default().fg(Color::DarkGray)
+                        Style::default().fg(get_colors().text_secondary)
                     } else {
-                        Style::default().fg(Color::Rgb(60, 60, 60))
+                        Style::default().fg(get_colors().inactive_text)
                     };
                     spans.push(Span::styled(num_str, num_style));
                 } else {
@@ -248,7 +249,7 @@ impl ConnectionSwitcher {
 
                 // Current connection indicator
                 spans.push(if is_current {
-                    Span::styled("● ", Style::default().fg(Color::Green))
+                    Span::styled("● ", Style::default().fg(get_colors().success))
                 } else {
                     Span::styled("  ", Style::default())
                 });
@@ -263,7 +264,7 @@ impl ConnectionSwitcher {
                         spans.push(Span::styled(
                             &conn.name[pos..pos + self.search.len()],
                             Style::default()
-                                .fg(Color::Yellow)
+                                .fg(get_colors().cyan)
                                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                         ));
                         spans.push(Span::styled(
@@ -280,7 +281,7 @@ impl ConnectionSwitcher {
                 // Connection details
                 spans.push(Span::styled(
                     format!(" ({}:{})", conn.host, conn.port),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(get_colors().text_secondary),
                 ));
 
                 ListItem::new(Line::from(spans))
@@ -291,14 +292,14 @@ impl ConnectionSwitcher {
         let list_widget = if items.is_empty() {
             List::new(vec![ListItem::new(Line::from(Span::styled(
                 "No matching connections",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(get_colors().error),
             )))])
         } else {
             List::new(items)
                 .highlight_style(
                     Style::default()
-                        .bg(Color::Rgb(147, 112, 219))
-                        .fg(Color::Black)
+                        .bg(get_colors().highlight_bg)
+                        .fg(get_colors().text_on_highlight)
                         .add_modifier(Modifier::BOLD),
                 )
                 .highlight_symbol("▶ ")
@@ -319,8 +320,8 @@ impl ConnectionSwitcher {
     }
 
     fn render_help(&self, frame: &mut Frame, area: Rect, total: usize) {
-        let purple = Color::Rgb(147, 112, 219);
-        let gray = Color::DarkGray;
+        let purple = get_colors().accent;
+        let gray = get_colors().text_secondary;
         let selected_idx = self.state.selected().unwrap_or(0);
 
         let help_spans = if self.is_search_mode {
@@ -375,7 +376,7 @@ impl ConnectionSwitcher {
                 Span::styled(" Cancel  ", Style::default().fg(gray)),
                 Span::styled(
                     format!("[{}/{}]", selected_idx + 1, total),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(get_colors().cyan),
                 ),
             ]
         };

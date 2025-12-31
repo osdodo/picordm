@@ -5,10 +5,12 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
+
+use crate::theme::{Theme, get_colors, get_theme};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -139,6 +141,8 @@ impl KeyContentEditor {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let title = if self.is_vim_command_mode {
             "Vim Command Mode (Enter to execute, Esc to cancel)".to_string()
         } else if !self.content.is_empty() {
@@ -156,41 +160,63 @@ impl KeyContentEditor {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
+            .border_style(Style::default().fg(colors.active_border))
             .title(Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
 
         if self.is_loading_value {
-            let loading_text = Span::styled("Loading value...", Style::default().fg(Color::Yellow));
+            let loading_text = Span::styled("Loading value...", Style::default().fg(colors.cyan));
             let paragraph = Paragraph::new(loading_text)
                 .block(block)
                 .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(paragraph, area);
         } else if !self.content.is_empty() {
-            if self.is_vim_command_mode {
+            let base_style = Style::default().bg(colors.editor_base_bg);
+            let cursor_style = Style::default().bg(colors.editor_cursor_bg);
+
+            let (render_area, cmd_area) = if self.is_vim_command_mode {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Min(1), Constraint::Length(1)])
                     .split(area.inner(Margin::new(1, 1)));
+                (chunks[0], Some(chunks[1]))
+            } else {
+                (area, None)
+            };
 
-                let mut editor_view = EditorView::new(&mut self.editor_state);
+            let editor_theme = EditorTheme {
+                block: if self.is_vim_command_mode {
+                    None
+                } else {
+                    Some(block.clone())
+                },
+                base: base_style,
+                cursor_style,
+                ..Default::default()
+            };
 
-                if self.is_json {
-                    let syntax_highlighter = SyntaxHighlighter::new("visual-studio-dark", "json");
-                    editor_view = editor_view.syntax_highlighter(Some(syntax_highlighter));
-                }
+            let mut editor_view = EditorView::new(&mut self.editor_state).theme(editor_theme);
 
-                frame.render_widget(editor_view, chunks[0]);
+            if self.is_json {
+                let syntax_theme = match get_theme() {
+                    Theme::Dark => "visual-studio-dark",
+                    Theme::Light => "inspired-github",
+                };
+                let syntax_highlighter = SyntaxHighlighter::new(syntax_theme, "json");
+                editor_view = editor_view.syntax_highlighter(Some(syntax_highlighter));
+            }
 
+            frame.render_widget(editor_view, render_area);
+
+            if let Some(cmd_area) = cmd_area {
                 let cmd_line = format!(":{}", self.vim_command_input);
                 let cmd_paragraph =
-                    Paragraph::new(cmd_line).style(Style::default().fg(Color::Yellow));
-                frame.render_widget(cmd_paragraph, chunks[1]);
-
+                    Paragraph::new(cmd_line).style(Style::default().fg(colors.cyan));
+                frame.render_widget(cmd_paragraph, cmd_area);
                 frame.render_widget(block, area);
 
                 let cursor_x = area.x + 2 + self.vim_command_input.len() as u16;
@@ -201,26 +227,12 @@ impl KeyContentEditor {
                         y: cursor_y,
                     });
                 }
-            } else {
-                let theme = EditorTheme {
-                    block: Some(block),
-                    ..Default::default()
-                };
-
-                let mut editor_view = EditorView::new(&mut self.editor_state).theme(theme);
-
-                if self.is_json {
-                    let syntax_highlighter = SyntaxHighlighter::new("visual-studio-dark", "json");
-                    editor_view = editor_view.syntax_highlighter(Some(syntax_highlighter));
-                }
-
-                frame.render_widget(editor_view, area);
             }
         } else {
             let paragraph = Paragraph::new("Select a key to view its value")
                 .block(block)
                 .wrap(Wrap { trim: true })
-                .style(Style::default().fg(Color::DarkGray));
+                .style(Style::default().fg(colors.text_secondary));
             frame.render_widget(paragraph, area);
         }
     }

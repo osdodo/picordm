@@ -8,20 +8,30 @@ use ratatui::{
 
 use crate::models::Screen;
 use crate::screens::{connection_screen, dashboard_screen};
-use crate::widgets::footer;
+use crate::theme::init_theme_manager;
+use crate::widgets::{
+    footer,
+    settings_dialog::SettingsDialog,
+    settings_storage::load_theme,
+};
 
 pub struct App {
     pub current_screen: Screen,
     pub connection_screen: connection_screen::ConnectionScreen,
     pub dashboard_screen: dashboard_screen::DashboardScreen,
+    pub settings_dialog: SettingsDialog,
 }
 
 impl App {
     pub fn new() -> Self {
+        let theme = load_theme();
+        init_theme_manager(theme);
+
         Self {
             current_screen: Screen::Connection,
             connection_screen: connection_screen::ConnectionScreen::new(),
             dashboard_screen: dashboard_screen::DashboardScreen::new(),
+            settings_dialog: SettingsDialog::new(),
         }
     }
 
@@ -52,6 +62,10 @@ impl App {
                 self.dashboard_screen.view(frame);
             }
         }
+
+        if self.settings_dialog.is_open {
+            self.settings_dialog.view(frame);
+        }
     }
 
     async fn handle_key_events(
@@ -59,8 +73,20 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> Result<bool> {
-        if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            return Ok(false);
+        // Global shortcuts
+        match key.code {
+            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Ok(false);
+            }
+            KeyCode::F(10) => {
+                self.settings_dialog.show();
+                return Ok(true);
+            }
+            _ => {}
+        }
+
+        if self.settings_dialog.is_open && self.settings_dialog.handle_key_event(key) {
+            return Ok(true);
         }
 
         match self.current_screen {

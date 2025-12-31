@@ -4,11 +4,12 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
 };
 
+use crate::theme::get_colors;
 use crate::widgets::format::format_bytes;
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,8 @@ impl FileSelector {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let current_dir_display = self
             .current_dir
             .to_string_lossy()
@@ -93,13 +96,13 @@ impl FileSelector {
             .title(Line::from(vec![Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::Rgb(147, 112, 219))
+                    .fg(colors.accent)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(147, 112, 219)))
-            .style(Style::default().bg(Color::Rgb(25, 25, 35)));
+            .border_style(Style::default().fg(colors.active_border))
+            .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
 
@@ -115,7 +118,7 @@ impl FileSelector {
         // Directory and file list
         if self.dir_entries.is_empty() {
             let no_files_widget = Paragraph::new("Directory is empty or cannot be accessed")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(colors.text_secondary))
                 .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(no_files_widget, chunks[0]);
         } else {
@@ -124,11 +127,11 @@ impl FileSelector {
                 .iter()
                 .map(|entry| match entry {
                     DirEntry::Parent => ListItem::new(Line::from(vec![
-                        Span::styled("[DIR] ", Style::default().fg(Color::Yellow)),
+                        Span::styled("[DIR] ", Style::default().fg(colors.cyan)),
                         Span::styled(
                             "..",
                             Style::default()
-                                .fg(Color::Yellow)
+                                .fg(colors.cyan)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ])),
@@ -139,8 +142,8 @@ impl FileSelector {
                             .to_string_lossy()
                             .to_string();
                         ListItem::new(Line::from(vec![
-                            Span::styled("[DIR] ", Style::default().fg(Color::Cyan)),
-                            Span::styled(dirname, Style::default().fg(Color::Cyan)),
+                            Span::styled("[DIR] ", Style::default().fg(colors.directory)),
+                            Span::styled(dirname, Style::default().fg(colors.directory)),
                         ]))
                     }
                     DirEntry::JsonFile(path, size) => {
@@ -151,10 +154,10 @@ impl FileSelector {
                             .to_string();
                         let size_str = format_bytes(*size);
                         ListItem::new(Line::from(vec![
-                            Span::styled(filename, Style::default().fg(Color::White)),
+                            Span::styled(filename, Style::default().fg(colors.file)),
                             Span::styled(
                                 format!(" ({})", size_str),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(colors.text_secondary),
                             ),
                         ]))
                     }
@@ -164,8 +167,8 @@ impl FileSelector {
             let list = List::new(items)
                 .highlight_style(
                     Style::default()
-                        .bg(Color::Rgb(50, 50, 70))
-                        .fg(Color::White)
+                        .bg(colors.bg_selected)
+                        .fg(colors.text_primary)
                         .add_modifier(Modifier::BOLD),
                 )
                 .highlight_symbol(">> ");
@@ -178,26 +181,28 @@ impl FileSelector {
                 Span::styled(
                     "↑↓",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(colors.cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Navigate  ", Style::default().fg(Color::White)),
+                Span::styled(" Navigate  ", Style::default().fg(colors.text_primary)),
                 Span::styled(
                     "Enter",
                     Style::default()
-                        .fg(Color::Green)
+                        .fg(colors.success)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Open/Import  ", Style::default().fg(Color::White)),
+                Span::styled(" Open/Import  ", Style::default().fg(colors.text_primary)),
                 Span::styled(
                     "Esc",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(colors.error_dark)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" Cancel", Style::default().fg(Color::White)),
+                Span::styled(" Cancel", Style::default().fg(colors.text_primary)),
             ]),
             Line::from(vec![
-                Span::styled("[DIR] Directory  ", Style::default().fg(Color::Cyan)),
-                Span::styled("JSON File", Style::default().fg(Color::Green)),
+                Span::styled("[DIR] Directory  ", Style::default().fg(colors.directory)),
+                Span::styled("JSON File", Style::default().fg(colors.success)),
             ]),
         ])
         .alignment(ratatui::layout::Alignment::Center);

@@ -4,12 +4,13 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 use crate::service::get_redis_service;
+use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -180,6 +181,8 @@ impl CommandMode {
     }
 
     fn render_command_input(&self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let title = if self.focus_on_output {
             "Command Input (Tab: Switch to Input | Esc: Exit)"
         } else {
@@ -187,15 +190,15 @@ impl CommandMode {
         };
 
         let border_color = if self.focus_on_output {
-            Color::Rgb(80, 90, 110)
+            colors.inactive_border
         } else {
-            Color::Rgb(147, 112, 219)
+            colors.active_border
         };
 
         let input_content = format!("> {}", self.command_input);
 
         let input_widget = Paragraph::new(input_content)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(colors.text_primary))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -204,7 +207,7 @@ impl CommandMode {
                     .title(Span::styled(
                         title,
                         Style::default()
-                            .fg(Color::White)
+                            .fg(colors.text_primary)
                             .add_modifier(Modifier::BOLD),
                     )),
             );
@@ -226,6 +229,8 @@ impl CommandMode {
     }
 
     fn render_command_output(&mut self, frame: &mut Frame, area: Rect) {
+        let colors = get_colors();
+
         let title = if self.command_output.is_empty() {
             "Command Output"
         } else if self.focus_on_output {
@@ -246,9 +251,9 @@ impl CommandMode {
         };
 
         let border_color = if self.focus_on_output {
-            Color::Rgb(147, 112, 219)
+            colors.active_border
         } else {
-            Color::Rgb(80, 90, 110)
+            colors.inactive_border
         };
 
         let block = Block::default()
@@ -258,14 +263,14 @@ impl CommandMode {
             .title(Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::White)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
 
         if self.command_output.is_empty() {
             let paragraph = Paragraph::new("No command executed yet")
                 .block(block)
-                .style(Style::default().fg(Color::DarkGray));
+                .style(Style::default().fg(colors.text_secondary));
             frame.render_widget(paragraph, area);
         } else {
             let theme = EditorTheme {
