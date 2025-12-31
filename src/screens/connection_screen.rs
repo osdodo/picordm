@@ -7,12 +7,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::screens::utils::{centered_rect_fixed_height, render_background};
+use crate::screens::utils::{centered_rect_fixed_size, render_background};
 use crate::service::get_redis_service;
 use crate::theme::get_colors;
 use crate::widgets::{
-    connection_form,
-    connection_list,
+    connection_form, connection_list,
     footer::{self, Footer},
     header::{self, Header},
 };
@@ -174,7 +173,7 @@ impl ConnectionScreen {
             } else {
                 27
             };
-            let form_area = centered_rect_fixed_height(60, form_height, area);
+            let form_area = centered_rect_fixed_size(120, form_height, area);
             frame.render_widget(Clear, form_area);
             self.connection_form.view(frame, form_area);
         }
@@ -334,7 +333,7 @@ impl ConnectionScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.inactive_border))
+            .border_style(Style::default().fg(colors.border_default))
             .title(Span::styled(
                 "View",
                 Style::default()
@@ -344,10 +343,7 @@ impl ConnectionScreen {
 
         // Show error message or default prompt
         let content = if let Some(err) = &self.footer.error_message {
-            Span::styled(
-                format!("Error: {}", err),
-                Style::default().fg(colors.error_dark),
-            )
+            Span::styled(format!("Error: {}", err), Style::default().fg(colors.error))
         } else {
             Span::styled(
                 "Select a connection to start",

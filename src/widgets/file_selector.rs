@@ -96,12 +96,12 @@ impl FileSelector {
             .title(Line::from(vec![Span::styled(
                 title,
                 Style::default()
-                    .fg(colors.accent)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.active_border))
+            .border_style(Style::default().fg(colors.border_active))
             .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
@@ -111,7 +111,7 @@ impl FileSelector {
             .margin(2)
             .constraints([
                 Constraint::Min(1),    // File list
-                Constraint::Length(3), // Instructions
+                Constraint::Length(1), // Instructions
             ])
             .split(area);
 
@@ -127,11 +127,11 @@ impl FileSelector {
                 .iter()
                 .map(|entry| match entry {
                     DirEntry::Parent => ListItem::new(Line::from(vec![
-                        Span::styled("[DIR] ", Style::default().fg(colors.cyan)),
+                        Span::styled("[DIR] ", Style::default().fg(colors.info)),
                         Span::styled(
                             "..",
                             Style::default()
-                                .fg(colors.cyan)
+                                .fg(colors.info)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ])),
@@ -142,8 +142,8 @@ impl FileSelector {
                             .to_string_lossy()
                             .to_string();
                         ListItem::new(Line::from(vec![
-                            Span::styled("[DIR] ", Style::default().fg(colors.directory)),
-                            Span::styled(dirname, Style::default().fg(colors.directory)),
+                            Span::styled("[DIR] ", Style::default().fg(colors.text_secondary)),
+                            Span::styled(dirname, Style::default().fg(colors.text_secondary)),
                         ]))
                     }
                     DirEntry::JsonFile(path, size) => {
@@ -154,10 +154,10 @@ impl FileSelector {
                             .to_string();
                         let size_str = format_bytes(*size);
                         ListItem::new(Line::from(vec![
-                            Span::styled(filename, Style::default().fg(colors.file)),
+                            Span::styled(filename, Style::default().fg(colors.success)),
                             Span::styled(
                                 format!(" ({})", size_str),
-                                Style::default().fg(colors.text_secondary),
+                                Style::default().fg(colors.success),
                             ),
                         ]))
                     }
@@ -167,44 +167,38 @@ impl FileSelector {
             let list = List::new(items)
                 .highlight_style(
                     Style::default()
-                        .bg(colors.bg_selected)
-                        .fg(colors.text_primary)
+                        .bg(colors.bg_highlight)
+                        .fg(colors.text_on_highlight)
                         .add_modifier(Modifier::BOLD),
                 )
-                .highlight_symbol(">> ");
+                .highlight_symbol("▶ ");
 
             frame.render_stateful_widget(list, chunks[0], &mut self.state);
         }
 
-        let instructions = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled(
-                    "↑↓",
-                    Style::default()
-                        .fg(colors.cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" Navigate  ", Style::default().fg(colors.text_primary)),
-                Span::styled(
-                    "Enter",
-                    Style::default()
-                        .fg(colors.success)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" Open/Import  ", Style::default().fg(colors.text_primary)),
-                Span::styled(
-                    "Esc",
-                    Style::default()
-                        .fg(colors.error_dark)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" Cancel", Style::default().fg(colors.text_primary)),
-            ]),
-            Line::from(vec![
-                Span::styled("[DIR] Directory  ", Style::default().fg(colors.directory)),
-                Span::styled("JSON File", Style::default().fg(colors.success)),
-            ]),
-        ])
+        let instructions = Paragraph::new(Line::from(vec![
+            Span::styled(
+                "↑↓",
+                Style::default()
+                    .fg(colors.info)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Navigate  ", Style::default().fg(colors.text_primary)),
+            Span::styled(
+                "Enter",
+                Style::default()
+                    .fg(colors.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Open/Import  ", Style::default().fg(colors.text_primary)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(colors.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Cancel", Style::default().fg(colors.text_primary)),
+        ]))
         .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(instructions, chunks[1]);
     }

@@ -9,11 +9,7 @@ use ratatui::{
 use crate::models::Screen;
 use crate::screens::{connection_screen, dashboard_screen};
 use crate::theme::init_theme_manager;
-use crate::widgets::{
-    footer,
-    settings_dialog::SettingsDialog,
-    settings_storage::load_theme,
-};
+use crate::widgets::{footer, settings_dialog::SettingsDialog, settings_storage::load_settings};
 
 pub struct App {
     pub current_screen: Screen,
@@ -24,8 +20,8 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let theme = load_theme();
-        init_theme_manager(theme);
+        let settings = load_settings();
+        init_theme_manager(settings.theme, settings.enable_bg_transparent);
 
         Self {
             current_screen: Screen::Connection,

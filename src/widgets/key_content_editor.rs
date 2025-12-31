@@ -6,7 +6,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 
@@ -144,40 +144,54 @@ impl KeyContentEditor {
         let colors = get_colors();
 
         let title = if self.is_vim_command_mode {
-            "Vim Command Mode (Enter to execute, Esc to cancel)".to_string()
+            Line::from(vec![Span::styled(
+                "Vim Command Mode (Enter to execute, Esc to cancel)",
+                Style::default()
+                    .fg(colors.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            )])
         } else if !self.content.is_empty() {
-            let mode_hint = match self.editor_state.mode {
-                EditorMode::Normal => "Press ':' for commands (:w=Save :q=Quit :wq=Save&Quit)",
-                EditorMode::Insert => "Press Esc to Normal mode, then ':' for commands",
-                EditorMode::Visual => "Press Esc to Normal mode, then ':' for commands",
-                EditorMode::Search => "Press Esc to Normal mode, then ':' for commands",
+            let (mode_name, mode_color) = match self.editor_state.mode {
+                EditorMode::Normal => ("NORMAL", colors.success),
+                EditorMode::Insert => ("INSERT", colors.info),
+                EditorMode::Visual => ("VISUAL", colors.warning),
+                EditorMode::Search => ("SEARCH", colors.info),
             };
-            format!("View/Edit ({})", mode_hint)
+            let mode_hint = match self.editor_state.mode {
+                EditorMode::Normal => " (Press ':' for commands (:w=Save :q=Quit :wq=Save&Quit))",
+                EditorMode::Insert => " (Press Esc to Normal mode, then ':' for commands)",
+                EditorMode::Visual => " (Press Esc to Normal mode, then ':' for commands)",
+                EditorMode::Search => " (Press Esc to Normal mode, then ':' for commands)",
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("[{}]", mode_name),
+                    Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(mode_hint, Style::default().fg(colors.text_secondary)),
+            ])
         } else {
-            "View".to_string()
+            Line::from(vec![Span::styled(
+                "View",
+                Style::default()
+                    .fg(colors.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            )])
         };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.active_border))
-            .title(Span::styled(
-                title,
-                Style::default()
-                    .fg(colors.text_primary)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            .border_style(Style::default().fg(colors.border_active))
+            .title(title);
 
         if self.is_loading_value {
-            let loading_text = Span::styled("Loading value...", Style::default().fg(colors.cyan));
+            let loading_text = Span::styled("Loading value...", Style::default().fg(colors.info));
             let paragraph = Paragraph::new(loading_text)
                 .block(block)
                 .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(paragraph, area);
         } else if !self.content.is_empty() {
-            let base_style = Style::default().bg(colors.editor_base_bg);
-            let cursor_style = Style::default().bg(colors.editor_cursor_bg);
-
             let (render_area, cmd_area) = if self.is_vim_command_mode {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -188,6 +202,11 @@ impl KeyContentEditor {
                 (area, None)
             };
 
+            let base_style = Style::default()
+                .bg(colors.editor_base_bg)
+                .fg(colors.text_primary);
+            let cursor_style = Style::default().bg(colors.editor_cursor_bg);
+
             let editor_theme = EditorTheme {
                 block: if self.is_vim_command_mode {
                     None
@@ -196,6 +215,7 @@ impl KeyContentEditor {
                 },
                 base: base_style,
                 cursor_style,
+                status_line: None,
                 ..Default::default()
             };
 
@@ -215,7 +235,7 @@ impl KeyContentEditor {
             if let Some(cmd_area) = cmd_area {
                 let cmd_line = format!(":{}", self.vim_command_input);
                 let cmd_paragraph =
-                    Paragraph::new(cmd_line).style(Style::default().fg(colors.cyan));
+                    Paragraph::new(cmd_line).style(Style::default().fg(colors.info));
                 frame.render_widget(cmd_paragraph, cmd_area);
                 frame.render_widget(block, area);
 

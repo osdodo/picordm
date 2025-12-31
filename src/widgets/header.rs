@@ -61,19 +61,19 @@ impl Header {
         if self.is_connecting {
             if let Some(conn_name) = &self.connection_name {
                 spans.extend(vec![
-                    Span::styled("Connecting to ", Style::default().fg(colors.cyan)),
+                    Span::styled("Connecting to ", Style::default().fg(colors.info)),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
-                            .fg(colors.cyan)
+                            .fg(colors.info)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(" ...", Style::default().fg(colors.cyan)),
+                    Span::styled(" ...", Style::default().fg(colors.info)),
                 ]);
             } else {
                 spans.push(Span::styled(
                     "Connecting...",
-                    Style::default().fg(colors.cyan),
+                    Style::default().fg(colors.info),
                 ));
             }
         } else if let Some(conn_name) = &self.connection_name {
@@ -82,10 +82,7 @@ impl Header {
                 let memory = format_bytes(info.used_memory);
 
                 spans.extend(vec![
-                    Span::styled(
-                        "Connection: ",
-                        Style::default().fg(colors.text_secondary),
-                    ),
+                    Span::styled("Connection: ", Style::default().fg(colors.text_secondary)),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
@@ -94,32 +91,26 @@ impl Header {
                     ),
                     Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
                     Span::styled("Uptime: ", Style::default().fg(colors.text_secondary)),
-                    Span::styled(uptime, Style::default().fg(colors.cyan)),
+                    Span::styled(uptime, Style::default().fg(colors.info_uptime)),
                     Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
-                    Span::styled(
-                        "Clients: ",
-                        Style::default().fg(colors.text_secondary),
-                    ),
+                    Span::styled("Clients: ", Style::default().fg(colors.text_secondary)),
                     Span::styled(
                         format!("{}", info.connected_clients),
-                        Style::default().fg(colors.accent),
+                        Style::default().fg(colors.info_clients),
                     ),
                     Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
                     Span::styled("Keys: ", Style::default().fg(colors.text_secondary)),
                     Span::styled(
                         format!("{}", info.total_keys),
-                        Style::default().fg(colors.key),
+                        Style::default().fg(colors.info_keys),
                     ),
                     Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
                     Span::styled("Memory: ", Style::default().fg(colors.text_secondary)),
-                    Span::styled(memory, Style::default().fg(colors.success)),
+                    Span::styled(memory, Style::default().fg(colors.info_memory)),
                 ]);
             } else {
                 spans.extend(vec![
-                    Span::styled(
-                        "Connection: ",
-                        Style::default().fg(colors.text_secondary),
-                    ),
+                    Span::styled("Connection: ", Style::default().fg(colors.text_secondary)),
                     Span::styled(
                         conn_name.clone(),
                         Style::default()
@@ -132,15 +123,12 @@ impl Header {
             if self.is_loading_server_info {
                 spans.extend(vec![
                     Span::styled("  |  ", Style::default().fg(colors.text_secondary)),
-                    Span::styled(
-                        "Loading server info...",
-                        Style::default().fg(colors.cyan),
-                    ),
+                    Span::styled("Loading server info...", Style::default().fg(colors.info)),
                 ]);
             }
         } else {
             spans.push(Span::styled(
-                "Not connected - Please select a connection from the list",
+                " Not connected - Please select a connection from the list",
                 Style::default().fg(colors.text_secondary),
             ));
         }
@@ -150,7 +138,7 @@ impl Header {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(colors.inactive_border)),
+                    .border_style(Style::default().fg(colors.border_default)),
             )
             .alignment(ratatui::layout::Alignment::Left);
 

@@ -68,22 +68,16 @@ impl ProgressDialog {
 
         let colors = get_colors();
 
-        let title_color = if self.is_complete {
-            colors.success
-        } else {
-            colors.active_border
-        };
-
         let block = Block::default()
             .title(Line::from(vec![Span::styled(
                 &self.title,
                 Style::default()
-                    .fg(title_color)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(title_color))
+            .border_style(Style::default().fg(colors.border_active))
             .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
@@ -122,7 +116,7 @@ impl ProgressDialog {
                             {
                                 colors.success
                             } else {
-                                colors.error_dark
+                                colors.error
                             },
                         )
                         .add_modifier(Modifier::BOLD),
@@ -147,14 +141,14 @@ impl ProgressDialog {
             let mut error_lines = vec![Line::from(vec![Span::styled(
                 "Failed keys: ",
                 Style::default()
-                    .fg(colors.error_dark)
+                    .fg(colors.error)
                     .add_modifier(Modifier::BOLD),
             )])];
 
             // Show up to 5 failed keys
             for error in self.error_details.iter().take(5) {
                 error_lines.push(Line::from(vec![
-                    Span::styled("  • ", Style::default().fg(colors.error_dark)),
+                    Span::styled("  • ", Style::default().fg(colors.error)),
                     Span::styled(error, Style::default().fg(colors.error)),
                 ]));
             }

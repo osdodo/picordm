@@ -78,13 +78,13 @@ impl KeyList {
         let colors = get_colors();
 
         let border_color = if is_focused {
-            colors.active_border
+            colors.border_active
         } else {
-            colors.inactive_border
+            colors.border_default
         };
 
         if self.is_loading {
-            let loading_text = Span::styled("Loading keys...", Style::default().fg(colors.cyan));
+            let loading_text = Span::styled("Loading keys...", Style::default().fg(colors.info));
             let loading_widget = Paragraph::new(loading_text)
                 .alignment(ratatui::layout::Alignment::Center)
                 .block(
@@ -156,10 +156,10 @@ impl KeyList {
             .highlight_style(
                 Style::default()
                     .bg(colors.bg_highlight)
-                    .fg(colors.text_primary)
+                    .fg(colors.text_on_highlight)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol(">> ");
+            .highlight_symbol("▶ ");
 
         frame.render_stateful_widget(list, area, &mut self.state);
     }

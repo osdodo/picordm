@@ -3,7 +3,7 @@ use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
     text::Span,
     widgets::{Block, BorderType, Borders, Paragraph},
@@ -190,9 +190,9 @@ impl CommandMode {
         };
 
         let border_color = if self.focus_on_output {
-            colors.inactive_border
+            colors.border_default
         } else {
-            colors.active_border
+            colors.border_active
         };
 
         let input_content = format!("> {}", self.command_input);
@@ -220,7 +220,7 @@ impl CommandMode {
             let cursor_y = area.y + 1;
 
             if cursor_x < area.right() && cursor_y < area.bottom() {
-                frame.set_cursor_position(ratatui::layout::Position {
+                frame.set_cursor_position(Position {
                     x: cursor_x,
                     y: cursor_y,
                 });
@@ -251,9 +251,9 @@ impl CommandMode {
         };
 
         let border_color = if self.focus_on_output {
-            colors.active_border
+            colors.border_active
         } else {
-            colors.inactive_border
+            colors.border_default
         };
 
         let block = Block::default()
@@ -273,8 +273,15 @@ impl CommandMode {
                 .style(Style::default().fg(colors.text_secondary));
             frame.render_widget(paragraph, area);
         } else {
+            let base_style = Style::default()
+                .bg(colors.editor_base_bg)
+                .fg(colors.text_primary);
+            let cursor_style = Style::default().bg(colors.editor_cursor_bg);
+
             let theme = EditorTheme {
                 block: Some(block),
+                base: base_style,
+                cursor_style,
                 ..Default::default()
             };
             let editor_view = EditorView::new(&mut self.editor_state).theme(theme);

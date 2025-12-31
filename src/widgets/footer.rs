@@ -78,7 +78,7 @@ impl Footer {
             match self.current_view_mode {
                 Some(ViewMode::KeyContent) => {
                     vec![
-                        Span::styled("Vim: ", Style::default().fg(colors.cyan)),
+                        Span::styled(" Vim: ", Style::default().fg(colors.info)),
                         Span::styled(":w", Style::default().fg(colors.info)),
                         Span::styled("(Save) ", Style::default().fg(colors.text_secondary)),
                         Span::styled(":q", Style::default().fg(colors.info)),
@@ -97,7 +97,7 @@ impl Footer {
                 }
                 Some(ViewMode::CommandMode) => {
                     vec![
-                        Span::styled("Enter", Style::default().fg(colors.info)),
+                        Span::styled(" Enter", Style::default().fg(colors.info)),
                         Span::styled(": Execute | ", Style::default().fg(colors.text_secondary)),
                         Span::styled("Tab", Style::default().fg(colors.info)),
                         Span::styled(
@@ -113,7 +113,7 @@ impl Footer {
                 }
                 _ => {
                     vec![
-                        Span::styled("j/k/↑↓", Style::default().fg(colors.info)),
+                        Span::styled(" j/k/↑↓", Style::default().fg(colors.info)),
                         Span::styled(": Navigate | ", Style::default().fg(colors.text_secondary)),
                         Span::styled("Enter", Style::default().fg(colors.info)),
                         Span::styled(": View | ", Style::default().fg(colors.text_secondary)),
@@ -149,7 +149,7 @@ impl Footer {
             }
         } else {
             vec![
-                Span::styled("n", Style::default().fg(colors.info)),
+                Span::styled(" n", Style::default().fg(colors.info)),
                 Span::styled(": New | ", Style::default().fg(colors.text_secondary)),
                 Span::styled("e", Style::default().fg(colors.info)),
                 Span::styled(": Edit | ", Style::default().fg(colors.text_secondary)),
@@ -171,7 +171,7 @@ impl Footer {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(colors.inactive_border)),
+                    .border_style(Style::default().fg(colors.border_default)),
             )
             .alignment(ratatui::layout::Alignment::Left);
 

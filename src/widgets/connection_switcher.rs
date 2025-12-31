@@ -159,13 +159,13 @@ impl ConnectionSwitcher {
 
         let title = if is_filtering {
             format!(
-                "⚡ Quick Connection Switch ({}/{} connections)",
+                "Quick Connection Switch ({}/{} connections)",
                 filtered_connections.len(),
                 total_connections
             )
         } else {
             format!(
-                "⚡ Quick Connection Switch ({} connections)",
+                "Quick Connection Switch ({} connections)",
                 total_connections
             )
         };
@@ -174,13 +174,13 @@ impl ConnectionSwitcher {
             .title(Line::from(vec![Span::styled(
                 title,
                 Style::default()
-                    .fg(get_colors().accent)
+                    .fg(get_colors().text_primary)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(get_colors().active_border))
-            .style(Style::default().bg(get_colors().bg_list_item));
+            .border_style(Style::default().fg(get_colors().border_active))
+            .style(Style::default().bg(get_colors().bg_dialog));
         frame.render_widget(block, area);
 
         let inner = area.inner(ratatui::layout::Margin {
@@ -240,7 +240,7 @@ impl ConnectionSwitcher {
                     let num_style = if *original_idx < 9 {
                         Style::default().fg(get_colors().text_secondary)
                     } else {
-                        Style::default().fg(get_colors().inactive_text)
+                        Style::default().fg(get_colors().text_inactive)
                     };
                     spans.push(Span::styled(num_str, num_style));
                 } else {
@@ -264,7 +264,7 @@ impl ConnectionSwitcher {
                         spans.push(Span::styled(
                             &conn.name[pos..pos + self.search.len()],
                             Style::default()
-                                .fg(get_colors().cyan)
+                                .fg(get_colors().info)
                                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                         ));
                         spans.push(Span::styled(
@@ -298,7 +298,7 @@ impl ConnectionSwitcher {
             List::new(items)
                 .highlight_style(
                     Style::default()
-                        .bg(get_colors().highlight_bg)
+                        .bg(get_colors().bg_highlight)
                         .fg(get_colors().text_on_highlight)
                         .add_modifier(Modifier::BOLD),
                 )
@@ -376,7 +376,7 @@ impl ConnectionSwitcher {
                 Span::styled(" Cancel  ", Style::default().fg(gray)),
                 Span::styled(
                     format!("[{}/{}]", selected_idx + 1, total),
-                    Style::default().fg(get_colors().cyan),
+                    Style::default().fg(get_colors().info),
                 ),
             ]
         };

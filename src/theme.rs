@@ -11,37 +11,26 @@ pub enum Theme {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThemeColors {
-    pub active_border: Color,
-    pub inactive_border: Color,
-    pub required: Color,
-    pub highlight_bg: Color,
     pub accent: Color,
-
+    pub border_active: Color,
+    pub border_default: Color,
     pub text_primary: Color,
     pub text_secondary: Color,
     pub text_disabled: Color,
     pub text_on_highlight: Color,
-
+    pub text_required: Color,
+    pub text_inactive: Color,
     pub success: Color,
     pub warning: Color,
     pub error: Color,
-    pub error_dark: Color,
     pub info: Color,
-
-    pub cyan: Color,
-
     pub bg_main: Color,
     pub bg_dialog: Color,
-    pub bg_list_item: Color,
     pub bg_highlight: Color,
-    pub bg_selected: Color,
-    pub bg_error: Color,
-
-    pub directory: Color,
-    pub file: Color,
-    pub key: Color,
-    pub inactive_text: Color,
-
+    pub info_uptime: Color,
+    pub info_clients: Color,
+    pub info_keys: Color,
+    pub info_memory: Color,
     pub editor_base_bg: Color,
     pub editor_cursor_bg: Color,
 }
@@ -49,31 +38,26 @@ pub struct ThemeColors {
 impl ThemeColors {
     pub fn dark() -> Self {
         Self {
-            active_border: Color::Rgb(147, 112, 219),
-            inactive_border: Color::Rgb(80, 90, 110),
-            required: Color::LightRed,
-            highlight_bg: Color::Rgb(147, 112, 219),
-            accent: Color::Rgb(147, 112, 219),
+            accent: Color::Rgb(102, 31, 245),
+            border_active: Color::Rgb(80, 80, 120),
+            border_default: Color::Rgb(80, 80, 80),
             text_primary: Color::White,
-            text_secondary: Color::DarkGray,
+            text_secondary: Color::Rgb(187, 187, 187),
             text_disabled: Color::DarkGray,
-            text_on_highlight: Color::Black,
+            text_on_highlight: Color::White,
+            text_required: Color::LightRed,
+            text_inactive: Color::Rgb(60, 60, 60),
             success: Color::Green,
             warning: Color::Yellow,
             error: Color::LightRed,
-            error_dark: Color::Red,
-            info: Color::Cyan,
-            cyan: Color::Cyan,
+            info: Color::Rgb(101, 79, 246),
             bg_main: Color::Rgb(20, 20, 30),
             bg_dialog: Color::Rgb(25, 25, 35),
-            bg_list_item: Color::Rgb(30, 30, 40),
-            bg_highlight: Color::Rgb(34, 36, 64),
-            bg_selected: Color::Rgb(50, 50, 70),
-            bg_error: Color::Rgb(50, 20, 20),
-            directory: Color::Cyan,
-            file: Color::White,
-            key: Color::Magenta,
-            inactive_text: Color::Rgb(60, 60, 60),
+            bg_highlight: Color::Rgb(102, 31, 245),
+            info_uptime: Color::Magenta,
+            info_clients: Color::Rgb(102, 31, 245),
+            info_keys: Color::Magenta,
+            info_memory: Color::Green,
             editor_base_bg: Color::Rgb(20, 20, 30),
             editor_cursor_bg: Color::White,
         }
@@ -81,32 +65,27 @@ impl ThemeColors {
 
     pub fn light() -> Self {
         Self {
-            active_border: Color::Rgb(99, 102, 241),
-            inactive_border: Color::Rgb(148, 163, 184),
-            required: Color::Rgb(239, 68, 68),
-            highlight_bg: Color::Rgb(99, 102, 241),
-            accent: Color::Rgb(139, 92, 246),
+            accent: Color::Rgb(102, 31, 245),
+            border_active: Color::Rgb(0, 0, 0),
+            border_default: Color::Rgb(174, 174, 174),
             text_primary: Color::Rgb(15, 23, 42),
             text_secondary: Color::Rgb(71, 85, 105),
             text_disabled: Color::Rgb(148, 163, 184),
             text_on_highlight: Color::Rgb(255, 255, 255),
-            success: Color::Rgb(16, 185, 129),
+            text_required: Color::Rgb(239, 68, 68),
+            text_inactive: Color::Rgb(148, 163, 184),
+            success: Color::Rgb(16, 148, 76),
             warning: Color::Rgb(245, 158, 11),
             error: Color::Rgb(239, 68, 68),
-            error_dark: Color::Rgb(220, 38, 38),
-            info: Color::Rgb(37, 99, 235),
-            cyan: Color::Rgb(37, 99, 235),
+            info: Color::Rgb(101, 79, 246),
             bg_main: Color::Rgb(248, 250, 252),
             bg_dialog: Color::Rgb(255, 255, 255),
-            bg_list_item: Color::Rgb(255, 255, 255),
-            bg_highlight: Color::Rgb(224, 231, 255),
-            bg_selected: Color::Rgb(199, 210, 254),
-            bg_error: Color::Rgb(254, 226, 226),
-            directory: Color::Rgb(14, 165, 233),
-            file: Color::Rgb(51, 65, 85),
-            key: Color::Rgb(168, 85, 247),
-            inactive_text: Color::Rgb(148, 163, 184),
-            editor_base_bg: Color::Rgb(255, 255, 255),
+            bg_highlight: Color::Rgb(99, 102, 241),
+            info_uptime: Color::Magenta,
+            info_clients: Color::Rgb(102, 31, 245),
+            info_keys: Color::Magenta,
+            info_memory: Color::Green,
+            editor_base_bg: Color::Rgb(248, 250, 252),
             editor_cursor_bg: Color::Rgb(30, 41, 59),
         }
     }
@@ -117,19 +96,31 @@ impl ThemeColors {
             Theme::Light => Self::light(),
         }
     }
+
+    pub fn with_transparency(mut self, enable_bg_transparent: bool) -> Self {
+        if enable_bg_transparent {
+            self.bg_main = Color::Reset;
+            self.bg_dialog = Color::Reset;
+            self.editor_base_bg = Color::Reset;
+        }
+        self
+    }
 }
 
 pub struct ThemeManager {
     current: RwLock<Theme>,
     colors: RwLock<Arc<ThemeColors>>,
+    enable_bg_transparent: RwLock<bool>,
 }
 
 impl ThemeManager {
-    fn new(theme: Theme) -> Self {
-        let colors = Arc::new(ThemeColors::from_theme(theme));
+    fn new(theme: Theme, enable_bg_transparent: bool) -> Self {
+        let colors =
+            Arc::new(ThemeColors::from_theme(theme).with_transparency(enable_bg_transparent));
         Self {
             current: RwLock::new(theme),
             colors: RwLock::new(colors),
+            enable_bg_transparent: RwLock::new(enable_bg_transparent),
         }
     }
 
@@ -141,9 +132,23 @@ impl ThemeManager {
         *self.current.read().unwrap()
     }
 
+    pub fn get_enable_bg_transparent(&self) -> bool {
+        *self.enable_bg_transparent.read().unwrap()
+    }
+
     pub fn set_theme(&self, theme: Theme) {
-        let colors = Arc::new(ThemeColors::from_theme(theme));
+        let enable_bg_transparent = *self.enable_bg_transparent.read().unwrap();
+        let colors =
+            Arc::new(ThemeColors::from_theme(theme).with_transparency(enable_bg_transparent));
         *self.current.write().unwrap() = theme;
+        *self.colors.write().unwrap() = colors;
+    }
+
+    pub fn set_enable_bg_transparent(&self, enable_bg_transparent: bool) {
+        let theme = *self.current.read().unwrap();
+        let colors =
+            Arc::new(ThemeColors::from_theme(theme).with_transparency(enable_bg_transparent));
+        *self.enable_bg_transparent.write().unwrap() = enable_bg_transparent;
         *self.colors.write().unwrap() = colors;
     }
 }
@@ -151,8 +156,8 @@ impl ThemeManager {
 static THEME_MANAGER: OnceLock<ThemeManager> = OnceLock::new();
 
 /// Initialize theme manager (should be called once at startup)
-pub fn init_theme_manager(theme: Theme) {
-    THEME_MANAGER.get_or_init(|| ThemeManager::new(theme));
+pub fn init_theme_manager(theme: Theme, enable_bg_transparent: bool) {
+    THEME_MANAGER.get_or_init(|| ThemeManager::new(theme, enable_bg_transparent));
 }
 
 fn get_manager() -> &'static ThemeManager {
@@ -169,6 +174,14 @@ pub fn get_theme() -> Theme {
     get_manager().get_theme()
 }
 
+pub fn get_enable_bg_transparent() -> bool {
+    get_manager().get_enable_bg_transparent()
+}
+
 pub fn set_theme(theme: Theme) {
     get_manager().set_theme(theme);
+}
+
+pub fn set_enable_bg_transparent(enable_bg_transparent: bool) {
+    get_manager().set_enable_bg_transparent(enable_bg_transparent);
 }

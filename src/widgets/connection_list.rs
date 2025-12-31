@@ -90,7 +90,7 @@ impl ConnectionList {
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
-        
+
         let items: Vec<ListItem> = self
             .connections
             .iter()
@@ -103,7 +103,7 @@ impl ConnectionList {
                 );
 
                 let cluster_span = if conn.is_cluster {
-                    Span::styled(" [Cluster]", Style::default().fg(colors.directory))
+                    Span::styled(" [Cluster]", Style::default().fg(colors.text_secondary))
                 } else {
                     Span::raw("")
                 };
@@ -117,7 +117,7 @@ impl ConnectionList {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(colors.active_border))
+                    .border_style(Style::default().fg(colors.border_active))
                     .title(Span::styled(
                         format!("Redis Connections ({})", self.connections.len()),
                         Style::default()
@@ -127,7 +127,7 @@ impl ConnectionList {
             )
             .highlight_style(
                 Style::default()
-                    .bg(colors.highlight_bg)
+                    .bg(colors.bg_highlight)
                     .fg(colors.text_on_highlight)
                     .add_modifier(Modifier::BOLD),
             )

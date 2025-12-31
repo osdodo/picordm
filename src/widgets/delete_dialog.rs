@@ -59,14 +59,14 @@ impl DeleteDialog {
 
         let block = Block::default()
             .title(Line::from(vec![Span::styled(
-                "⚠ Confirm Delete",
+                "Confirm Delete",
                 Style::default()
-                    .fg(colors.error)
+                    .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.error))
+            .border_style(Style::default().fg(colors.border_active))
             .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
@@ -75,35 +75,28 @@ impl DeleteDialog {
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(2), // Message
+                Constraint::Min(1),    // Top spacing
+                Constraint::Length(1), // Message
+                Constraint::Min(1),    // Middle spacing
                 Constraint::Length(1), // Buttons hint
             ])
             .split(area);
 
-        let message = if self.selected_count == 1 {
-            "Are you sure you want to delete 1 key?".to_string()
-        } else {
-            format!(
-                "Are you sure you want to delete {} keys?",
-                self.selected_count
-            )
-        };
+        let message = format!(
+            "Are you sure you want to delete {} key{}?",
+            self.selected_count,
+            if self.selected_count == 1 { "" } else { "s" }
+        );
 
-        let message_widget = Paragraph::new(vec![
-            Line::from(Span::styled(
-                message,
-                Style::default()
-                    .fg(colors.text_primary)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "This action cannot be undone.",
-                Style::default().fg(colors.error),
-            )),
-        ])
+        let message_widget = Paragraph::new(Line::from(Span::styled(
+            message,
+            Style::default()
+                .fg(colors.text_primary)
+                .add_modifier(Modifier::BOLD),
+        )))
         .alignment(ratatui::layout::Alignment::Center);
 
-        frame.render_widget(message_widget, chunks[0]);
+        frame.render_widget(message_widget, chunks[1]);
 
         let buttons_hint = Paragraph::new(Line::from(vec![
             Span::styled(
@@ -112,10 +105,7 @@ impl DeleteDialog {
                     .fg(colors.error)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                " Yes, delete  ",
-                Style::default().fg(colors.text_primary),
-            ),
+            Span::styled(" Yes, delete  ", Style::default().fg(colors.text_primary)),
             Span::styled(
                 "[n/Esc]",
                 Style::default()
@@ -126,7 +116,7 @@ impl DeleteDialog {
         ]))
         .alignment(ratatui::layout::Alignment::Center);
 
-        frame.render_widget(buttons_hint, chunks[1]);
+        frame.render_widget(buttons_hint, chunks[3]);
     }
 
     pub fn open(&mut self, count: usize) {

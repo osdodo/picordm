@@ -9,7 +9,7 @@ use ratatui::{
 use crate::models::{DbInfo, Screen, ServerInfo, ViewMode};
 use crate::screens::{
     impex,
-    utils::{centered_rect_fixed_height, draw_with_background, render_background},
+    utils::{centered_rect_fixed_size, draw_with_background, render_background},
 };
 use crate::service::get_redis_service;
 use crate::theme::get_colors;
@@ -679,13 +679,13 @@ impl DashboardScreen {
 
     fn render_dialogs(&mut self, frame: &mut Frame, area: Rect) {
         if self.delete_dialog.is_open {
-            let popup_area = centered_rect_fixed_height(60, 8, area);
+            let popup_area = centered_rect_fixed_size(70, 8, area);
             frame.render_widget(Clear, popup_area);
             self.delete_dialog.view(frame, popup_area);
         }
 
         if self.progress_dialog.is_visible {
-            let popup_area = centered_rect_fixed_height(60, 8, area);
+            let popup_area = centered_rect_fixed_size(70, 8, area);
             frame.render_widget(Clear, popup_area);
             self.progress_dialog.view(frame, popup_area);
         }
@@ -694,13 +694,13 @@ impl DashboardScreen {
             let connections_count = self.connection_switcher.connections.len();
             let list_height = (connections_count as u16).min(12);
             let popup_height = list_height + 5;
-            let popup_area = centered_rect_fixed_height(70, popup_height, area);
+            let popup_area = centered_rect_fixed_size(120, popup_height, area);
             frame.render_widget(Clear, popup_area);
             self.connection_switcher.view(frame, popup_area);
         }
 
         if self.file_selector.is_open {
-            let popup_area = centered_rect_fixed_height(70, 18, area);
+            let popup_area = centered_rect_fixed_size(90, 18, area);
             frame.render_widget(Clear, popup_area);
             self.file_selector.view(frame, popup_area);
         }
@@ -736,7 +736,7 @@ impl DashboardScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(get_colors().inactive_border))
+            .border_style(Style::default().fg(get_colors().border_default))
             .title(Span::styled(
                 "View",
                 Style::default()

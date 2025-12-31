@@ -1,4 +1,3 @@
-pub mod format;
 pub mod command_mode;
 pub mod connection_form;
 pub mod connection_list;
@@ -8,6 +7,7 @@ pub mod db_selector;
 pub mod delete_dialog;
 pub mod file_selector;
 pub mod footer;
+pub mod format;
 pub mod header;
 pub mod key_content_editor;
 pub mod key_list;

@@ -191,7 +191,7 @@ impl ConnectionForm {
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.inactive_border))
+            .border_style(Style::default().fg(colors.border_default))
             .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
@@ -689,7 +689,7 @@ impl ConnectionForm {
 
         let standalone_style = if !self.is_cluster {
             Style::default()
-                .fg(colors.active_border)
+                .fg(colors.border_active)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
             Style::default().fg(colors.text_secondary)
@@ -697,7 +697,7 @@ impl ConnectionForm {
 
         let cluster_style = if self.is_cluster {
             Style::default()
-                .fg(colors.active_border)
+                .fg(colors.border_active)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
             Style::default().fg(colors.text_secondary)
@@ -835,22 +835,16 @@ impl ConnectionForm {
             idx += 1; // Skip spacer
             if let Some(ref error) = self.validation_error {
                 let colors = get_colors();
-                let error_text = Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        "⚠ ",
-                        Style::default()
-                            .fg(colors.error)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(error, Style::default().fg(colors.error)),
-                ]))
+                let error_text = Paragraph::new(Line::from(vec![Span::styled(
+                    error,
+                    Style::default().fg(colors.error),
+                )]))
                 .alignment(ratatui::layout::Alignment::Center)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(colors.error))
-                        .style(Style::default().bg(colors.bg_error)),
+                        .border_style(Style::default().fg(colors.border_default)),
                 );
                 frame.render_widget(error_text, chunks[idx]);
             }
@@ -971,13 +965,13 @@ impl ConnectionForm {
         let colors = get_colors();
         let is_active = self.editing_field == field;
         let border_color = if is_active {
-            colors.active_border
+            colors.border_active
         } else {
-            colors.inactive_border
+            colors.border_default
         };
 
         let title_color = if is_active {
-            colors.active_border
+            colors.border_active
         } else {
             colors.text_primary
         };
@@ -993,7 +987,7 @@ impl ConnectionForm {
             title_spans.push(Span::styled(
                 " *",
                 Style::default()
-                    .fg(colors.required)
+                    .fg(colors.text_required)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -1048,13 +1042,13 @@ impl ConnectionForm {
         let colors = get_colors();
         let is_active = self.editing_field == field;
         let border_color = if is_active {
-            colors.active_border
+            colors.border_active
         } else {
-            colors.inactive_border
+            colors.border_default
         };
 
         let title_color = if is_active {
-            colors.active_border
+            colors.border_active
         } else {
             colors.text_primary
         };

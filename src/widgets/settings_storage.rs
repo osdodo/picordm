@@ -5,20 +5,20 @@ use crate::constants::SETTINGS_FILE_NAME;
 use crate::storage::Storage;
 use crate::theme::Theme;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct AppSettings {
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct AppSettings {
     #[serde(default)]
-    theme: Theme,
+    pub theme: Theme,
+    #[serde(default)]
+    pub enable_bg_transparent: bool,
 }
 
-pub fn load_theme() -> Theme {
+pub fn load_settings() -> AppSettings {
     let storage = Storage::new(SETTINGS_FILE_NAME);
-    let settings: AppSettings = storage.load();
-    settings.theme
+    storage.load()
 }
 
-pub fn save_theme(theme: Theme) -> Result<()> {
+pub fn save_settings(settings: &AppSettings) -> Result<()> {
     let storage = Storage::new(SETTINGS_FILE_NAME);
-    let settings = AppSettings { theme };
-    storage.save(&settings)
+    storage.save(settings)
 }

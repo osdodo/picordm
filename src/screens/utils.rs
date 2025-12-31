@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::theme::get_colors;
 
-pub fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect {
+pub fn centered_rect_fixed_size(width: u16, height: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -21,9 +21,9 @@ pub fn centered_rect_fixed_height(percent_x: u16, height: u16, r: Rect) -> Rect 
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Min(0),
+            Constraint::Length(width),
+            Constraint::Min(0),
         ])
         .split(popup_layout[1])[1]
 }

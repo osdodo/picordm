@@ -65,9 +65,9 @@ impl SearchBox {
 
     pub fn view(&self, frame: &mut Frame, area: Rect) -> Option<(u16, u16)> {
         let border_color = if self.is_focused {
-            get_colors().active_border
+            get_colors().border_active
         } else {
-            get_colors().inactive_border
+            get_colors().border_default
         };
 
         let title = if self.is_focused {

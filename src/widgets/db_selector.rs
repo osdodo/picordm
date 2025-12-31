@@ -89,7 +89,7 @@ impl DbSelector {
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
-        
+
         let display_text = if self.db_list.is_empty() {
             format!("db{}", self.current_db_index)
         } else {
@@ -103,9 +103,9 @@ impl DbSelector {
         };
 
         let border_color = if self.is_open {
-            colors.active_border
+            colors.border_active
         } else {
-            colors.inactive_border
+            colors.border_default
         };
 
         let title = if self.is_open {
@@ -138,7 +138,7 @@ impl DbSelector {
 
     fn render_dropdown(&mut self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
-        
+
         let dropdown_height = (self.db_list.len() as u16 + 2).min(10);
         let dropdown_y = if area.y >= dropdown_height {
             area.y.saturating_sub(dropdown_height)
@@ -176,16 +176,16 @@ impl DbSelector {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(colors.active_border))
+                    .border_style(Style::default().fg(colors.border_active))
                     .style(Style::default().bg(colors.bg_dialog)),
             )
             .highlight_style(
                 Style::default()
-                    .bg(colors.bg_selected)
-                    .fg(colors.text_primary)
+                    .bg(colors.bg_highlight)
+                    .fg(colors.text_on_highlight)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol(">> ");
+            .highlight_symbol("▶ ");
 
         frame.render_widget(Clear, dropdown_area);
         frame.render_stateful_widget(dropdown_list, dropdown_area, &mut self.state);
