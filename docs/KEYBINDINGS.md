@@ -5,6 +5,7 @@
 | Key      | Function         |
 | -------- | ---------------- |
 | `Ctrl+q` | Exit application |
+| `F10`    | Open settings    |
 
 ## Dashboard Mode
 
@@ -135,6 +136,23 @@ Press `/` to enter search mode:
 - First matching result is auto-selected
 - Press `Esc` in search mode to return to navigation mode
 - Press `Esc` again to close the dialog
+
+## Settings Dialog
+
+Press `F10` to open the Settings dialog:
+
+| Key                | Function                    |
+| ------------------ | --------------------------- |
+| `↑↓` / `j`/`k`     | Navigate settings           |
+| `Tab`              | Navigate settings           |
+| `←→` / `h`/`l`     | Change theme (Dark/Light)   |
+| `Space` / `Enter`  | Toggle current setting      |
+| `Esc`              | Close settings              |
+
+**Tips**:
+- Theme changes apply immediately
+- Settings are automatically saved when closing the dialog
+- Dark theme supports background transparency option
 
 ## Common Workflows
 

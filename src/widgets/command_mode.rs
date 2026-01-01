@@ -259,6 +259,7 @@ impl CommandMode {
                 block: Some(block),
                 base: base_style,
                 cursor_style,
+                status_line: None,
                 ..Default::default()
             };
             let editor_view = EditorView::new(&mut self.editor_state).theme(theme);

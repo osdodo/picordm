@@ -18,6 +18,7 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 - **Server Monitoring** - Real-time server stats
 - **Command Interface** - Execute Redis commands directly
 - **Import/Export** - JSON data import/export with full Redis type support
+- **Theme Support** - Dark/Light theme
 
 ## Installation
 
@@ -69,24 +70,17 @@ For `redis-cli -c` format, a single node is used as the cluster entry point. The
 
 For Redis Cluster setup, see [Cluster Documentation](docs/CLUSTER.md).
 
-### Key Operations
-
-- Browse and search keys in the sidebar
-- Press `Space` to select multiple keys
-- Press `Delete` to remove selected keys
-
-### Data Import/Export
-
-- `Ctrl+E` - Export data to JSON file
-- `Ctrl+L` - Import data from JSON file
-- See [IMPORT_DATA.md](docs/IMPORT_DATA.md) for format details
-
 ### Commands
 
 - `>` - Enter command mode
 - `/` - Search keys
 - `Esc` - Exit current mode
 - `Ctrl+t` - Quick connection switch
+- `Ctrl+e` - Export data
+- `Ctrl+l` - Import data
+- `Ctrl+n` - Switch database
+- `F5` - Refresh server stats
+- `F10` - Open settings (theme, transparency)
 
 ### Copy Text
 
