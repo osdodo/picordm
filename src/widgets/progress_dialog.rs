@@ -11,6 +11,8 @@ use crate::theme::get_colors;
 #[derive(Debug, Clone)]
 pub enum Message {
     Show(String, String),
+    ShowWithProgress(String, String, usize), // title, message, total
+    UpdateProgress(usize, usize, String),    // (current, total, message)
     Complete(String, Option<Vec<String>>),
     Hide,
 }
@@ -48,6 +50,19 @@ impl ProgressDialog {
                 self.progress = None;
                 self.completed_at = None;
                 self.is_visible = true;
+            }
+            Message::ShowWithProgress(title, message, total) => {
+                self.title = title;
+                self.message = message;
+                self.error_details.clear();
+                self.is_complete = false;
+                self.progress = Some((0, total));
+                self.completed_at = None;
+                self.is_visible = true;
+            }
+            Message::UpdateProgress(current, total, message) => {
+                self.progress = Some((current, total));
+                self.message = message;
             }
             Message::Complete(message, errors) => {
                 self.message = message;
@@ -89,16 +104,26 @@ impl ProgressDialog {
             0
         };
 
+        let progress_height = if self.progress.is_some() && !self.is_complete {
+            4 // Empty line + Count + percentage line + Progress bar
+        } else {
+            0
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
+                Constraint::Min(0),
                 Constraint::Length(2), // Message
-                if error_height > 0 {
+                if progress_height > 0 {
+                    Constraint::Length(progress_height)
+                } else if error_height > 0 {
                     Constraint::Length(error_height)
                 } else {
                     Constraint::Length(1)
-                }, // Error details or hint
+                },
+                Constraint::Min(0),
             ])
             .split(area);
 
@@ -134,7 +159,55 @@ impl ProgressDialog {
 
         let message_widget =
             Paragraph::new(message_lines).alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(message_widget, chunks[0]);
+        frame.render_widget(message_widget, chunks[1]);
+
+        // Show progress bar if in progress
+        if let Some((current, total)) = self.progress
+            && !self.is_complete
+        {
+            let percentage = if total > 0 {
+                (current as f64 / total as f64 * 100.0) as u16
+            } else {
+                0
+            };
+
+            let progress_text = format!("{} / {} keys", current, total);
+            let percentage_text = format!("{}%", percentage);
+
+            // Calculate progress bar width
+            let bar_width = chunks[1].width.saturating_sub(4) as usize;
+            let filled = if total > 0 {
+                (bar_width * current) / total
+            } else {
+                0
+            };
+            let empty = bar_width.saturating_sub(filled);
+
+            let progress_bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+
+            let progress_lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(progress_text, Style::default().fg(colors.text_secondary)),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        percentage_text,
+                        Style::default()
+                            .fg(colors.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![Span::styled(
+                    progress_bar,
+                    Style::default().fg(colors.accent),
+                )]),
+            ];
+
+            let progress_widget =
+                Paragraph::new(progress_lines).alignment(ratatui::layout::Alignment::Center);
+            frame.render_widget(progress_widget, chunks[2]);
+            return;
+        }
 
         // Show error details or hint
         if !self.error_details.is_empty() {
@@ -163,7 +236,7 @@ impl ProgressDialog {
             let error_widget = Paragraph::new(error_lines)
                 .alignment(ratatui::layout::Alignment::Left)
                 .wrap(ratatui::widgets::Wrap { trim: true });
-            frame.render_widget(error_widget, chunks[1]);
+            frame.render_widget(error_widget, chunks[2]);
         } else if self.is_complete {
             let hint_widget = Paragraph::new(Line::from(vec![
                 Span::styled("Press ", Style::default().fg(colors.text_secondary)),
@@ -176,7 +249,7 @@ impl ProgressDialog {
                 Span::styled(" to close", Style::default().fg(colors.text_secondary)),
             ]))
             .alignment(ratatui::layout::Alignment::Center);
-            frame.render_widget(hint_widget, chunks[1]);
+            frame.render_widget(hint_widget, chunks[2]);
         }
     }
 }

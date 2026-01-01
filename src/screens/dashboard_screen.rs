@@ -7,13 +7,14 @@ use ratatui::{
     text::Span,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
-use tokio::time::{Duration, sleep};
-
-use crate::models::{ConnectionConfig, Screen, ViewMode};
-use crate::screens::{
-    impex,
-    utils::{centered_rect_fixed_size, render_background},
+use tokio::{
+    sync::mpsc,
+    time::{Duration, sleep},
 };
+
+use crate::impex;
+use crate::models::{ConnectionConfig, Screen, ViewMode};
+use crate::screens::utils::{centered_rect_fixed_size, render_background};
 use crate::service::get_redis_service;
 use crate::theme::get_colors;
 use crate::widgets::{
@@ -357,16 +358,71 @@ impl DashboardScreen {
             Message::FileSelector(msg) => match self.file_selector.update(msg) {
                 file_selector::UpdateResult::Selected(path) => {
                     self.file_selector.update(file_selector::Message::Close);
-                    self.progress_dialog.update(progress_dialog::Message::Show(
-                        "Importing Data".to_string(),
-                        "Reading file...".to_string(),
-                    ));
+                    self.progress_dialog
+                        .update(progress_dialog::Message::ShowWithProgress(
+                            "Importing Data".to_string(),
+                            "Reading file...".to_string(),
+                            0,
+                        ));
                     terminal.draw(|frame| {
                         self.view(frame);
                     })?;
 
                     let db_index = self.db_selector.current_db_index;
-                    match impex::import_redis_data(&path, db_index, false).await {
+
+                    // Use Tokio channels to receive progress updates.
+                    let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+
+                    // Start import task
+                    let mut import_handle = {
+                        let path = path.clone();
+
+                        tokio::spawn(async move {
+                            impex::import_redis_data(
+                                &path,
+                                db_index,
+                                false,
+                                Some(move |current, total| {
+                                    let _ = progress_tx.send((current, total));
+                                }),
+                            )
+                            .await
+                        })
+                    };
+
+                    let result = loop {
+                        tokio::select! {
+                            progress_msg = progress_rx.recv() => {
+                                match progress_msg {
+                                    Some((current, total)) => {
+                                        let mut latest_current = current;
+                                        let mut latest_total = total;
+                                        while let Ok((c, t)) = progress_rx.try_recv() {
+                                            latest_current = c;
+                                            latest_total = t;
+                                        }
+
+                                        self.progress_dialog.update(progress_dialog::Message::UpdateProgress(
+                                            latest_current,
+                                            latest_total,
+                                            "Importing keys...".to_string(),
+                                        ));
+                                        terminal.draw(|frame| {
+                                            self.view(frame);
+                                        })?;
+                                    }
+                                    None => {
+                                        // The channel is closed, indicating that the sender has dropped the request; continue waiting for the task to complete.
+                                    }
+                                }
+                            }
+                            task_result = &mut import_handle => {
+                                break task_result.map_err(|e| anyhow::anyhow!("Import task failed: {}", e))?;
+                            }
+                        }
+                    };
+
+                    match result {
                         Ok(result) => {
                             let mut message =
                                 format!("Successfully imported {} keys", result.imported_count);
@@ -577,7 +633,7 @@ impl DashboardScreen {
         }
 
         if self.progress_dialog.is_visible {
-            let popup_area = centered_rect_fixed_size(70, 8, area);
+            let popup_area = centered_rect_fixed_size(90, 12, area);
             frame.render_widget(Clear, popup_area);
             self.progress_dialog.view(frame, popup_area);
         }
@@ -730,11 +786,13 @@ impl DashboardScreen {
 
         let database = self.db_selector.current_db_index;
 
-        // Show progress dialog
-        self.progress_dialog.update(progress_dialog::Message::Show(
-            "Export Data".to_string(),
-            format!("Exporting {} keys...", keys.len()),
-        ));
+        // Show progress dialog with initial progress
+        self.progress_dialog
+            .update(progress_dialog::Message::ShowWithProgress(
+                "Export Data".to_string(),
+                "Exporting keys...".to_string(),
+                keys.len(),
+            ));
         terminal.draw(|frame| {
             self.view(frame);
         })?;
@@ -746,9 +804,59 @@ impl DashboardScreen {
             database,
             keys.len()
         );
-        let file_path = super::impex::get_export_path(&file_name);
+        let file_path = impex::get_export_path(&file_name);
 
-        match super::impex::export_redis_data(connection_name, database, &keys, &file_path).await {
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+
+        let mut export_task = {
+            let connection_name = connection_name.clone();
+            let keys = keys.clone();
+            let file_path = file_path.clone();
+
+            tokio::spawn(async move {
+                impex::export_redis_data(
+                    connection_name,
+                    database,
+                    &keys,
+                    &file_path,
+                    Some(move |current, total| {
+                        let _ = progress_tx.send((current, total));
+                    }),
+                )
+                .await
+            })
+        };
+
+        let result = loop {
+            tokio::select! {
+                progress_msg = progress_rx.recv() => {
+                    if let Some((current, total)) = progress_msg {
+                        // Consume all pending progress updates in batches
+                        let mut latest_current = current;
+                        let mut latest_total = total;
+                        while let Ok((c, t)) = progress_rx.try_recv() {
+                            latest_current = c;
+                            latest_total = t;
+                        }
+
+                       // Update the UI to show the latest progress
+                        self.progress_dialog.update(progress_dialog::Message::UpdateProgress(
+                            latest_current,
+                            latest_total,
+                            "Exporting keys...".to_string(),
+                        ));
+                        terminal.draw(|frame| {
+                            self.view(frame);
+                        })?;
+                    }
+                }
+                task_result = &mut export_task => {
+                    break task_result.map_err(|e| anyhow::anyhow!("Export task failed: {}", e))?;
+                }
+            }
+        };
+
+        match result {
             Ok(result) => {
                 let location = if file_path.starts_with(dirs::desktop_dir().unwrap_or_default()) {
                     "Desktop"

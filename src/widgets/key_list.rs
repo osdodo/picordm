@@ -158,7 +158,7 @@ impl KeyList {
                     Span::styled(
                         "[✓] ",
                         Style::default()
-                            .fg(colors.success)
+                            .fg(colors.text_key_selected)
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
@@ -166,7 +166,7 @@ impl KeyList {
                 };
 
                 let key_style = if is_selected {
-                    Style::default().fg(colors.success)
+                    Style::default().fg(colors.text_key_selected)
                 } else {
                     Style::default().fg(colors.text_primary)
                 };

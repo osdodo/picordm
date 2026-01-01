@@ -398,24 +398,6 @@ impl RedisService {
         .await
     }
 
-    pub async fn get_key_ttl(&self, key: &str, db_index: u32) -> Result<i64> {
-        let key = key.to_string();
-        self.with_db(db_index, |conn| {
-            let key = key.clone();
-            async move {
-                match conn {
-                    ConnectionType::Standalone(mut c) => {
-                        Ok(redis::cmd("TTL").arg(key).query_async(&mut c).await?)
-                    }
-                    ConnectionType::Cluster(mut c) => {
-                        Ok(redis::cmd("TTL").arg(key).query_async(&mut c).await?)
-                    }
-                }
-            }
-        })
-        .await
-    }
-
     pub async fn key_exists(&self, key: &str, db_index: u32) -> Result<bool> {
         let key = key.to_string();
         self.with_db(db_index, |conn| {
@@ -642,6 +624,57 @@ impl RedisService {
                             let _: () = c.hset_multiple(&key, &values).await?;
                         }
                         Ok(())
+                    }
+                }
+            }
+        })
+        .await
+    }
+
+    pub async fn get_keys_metadata(
+        &self,
+        keys: &[String],
+        db_index: u32,
+    ) -> Result<Vec<(String, Option<i64>)>> {
+        let keys_owned: Vec<String> = keys.to_vec();
+        self.with_db(db_index, |conn| {
+            let keys = keys_owned.clone();
+            async move {
+                match conn {
+                    ConnectionType::Standalone(mut c) => {
+                        // Batch retrieve the type and TTL of multiple keys (optimized using pipeline).
+                        let mut pipe = redis::pipe();
+                        for key in &keys {
+                            pipe.cmd("TYPE").arg(key).cmd("TTL").arg(key);
+                        }
+                        let results: Vec<redis::Value> = pipe.query_async(&mut c).await?;
+
+                        let mut metadata = Vec::new();
+                        for i in (0..results.len()).step_by(2) {
+                            let key_type = match &results[i] {
+                                redis::Value::SimpleString(s) => s.clone(),
+                                redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone())
+                                    .unwrap_or_else(|_| "string".to_string()),
+                                _ => "string".to_string(),
+                            };
+                            let ttl = match &results.get(i + 1) {
+                                Some(redis::Value::Int(t)) if *t > 0 => Some(*t),
+                                _ => None,
+                            };
+                            metadata.push((key_type, ttl));
+                        }
+                        Ok(metadata)
+                    }
+                    ConnectionType::Cluster(mut c) => {
+                        let mut metadata = Vec::new();
+                        for key in &keys {
+                            let key_type: String =
+                                redis::cmd("TYPE").arg(key).query_async(&mut c).await?;
+                            let ttl: i64 = redis::cmd("TTL").arg(key).query_async(&mut c).await?;
+                            let ttl_opt = if ttl > 0 { Some(ttl) } else { None };
+                            metadata.push((key_type, ttl_opt));
+                        }
+                        Ok(metadata)
                     }
                 }
             }
