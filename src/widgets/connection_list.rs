@@ -18,6 +18,8 @@ pub enum Message {
     Select,
     Delete,
     Edit,
+    Add(ConnectionConfig),
+    Update(ConnectionConfig),
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,14 @@ impl ConnectionList {
                     UpdateResult::None
                 }
             }
+            Message::Add(config) => match self.push(config) {
+                Ok(_) => UpdateResult::None,
+                Err(e) => UpdateResult::SaveError(e),
+            },
+            Message::Update(config) => match self.update_connection(config) {
+                Ok(_) => UpdateResult::None,
+                Err(e) => UpdateResult::SaveError(e),
+            },
         }
     }
 
@@ -178,7 +188,7 @@ impl ConnectionList {
         self.get_selected()
     }
 
-    pub fn push(&mut self, connection: ConnectionConfig) -> Result<(), String> {
+    fn push(&mut self, connection: ConnectionConfig) -> Result<(), String> {
         self.connections.push(connection);
         let new_index = self.connections.len() - 1;
         self.state.select(Some(new_index));
@@ -186,7 +196,7 @@ impl ConnectionList {
         save_connections(&self.connections).map_err(|e| format!("Failed to save: {}", e))
     }
 
-    pub fn update_connection(&mut self, connection: ConnectionConfig) -> Result<(), String> {
+    fn update_connection(&mut self, connection: ConnectionConfig) -> Result<(), String> {
         if let Some(pos) = self.connections.iter().position(|c| c.id == connection.id) {
             self.connections[pos] = connection;
         }

@@ -16,6 +16,8 @@ pub enum Message {
     Next,
     Previous,
     Select,
+    Toggle,
+    UpdateDbList(Vec<DbInfo>),
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,14 @@ impl DbSelector {
                 } else {
                     UpdateResult::None
                 }
+            }
+            Message::Toggle => {
+                self.toggle();
+                UpdateResult::None
+            }
+            Message::UpdateDbList(db_list) => {
+                self.db_list = db_list;
+                UpdateResult::None
             }
         }
     }
@@ -191,7 +201,7 @@ impl DbSelector {
         frame.render_stateful_widget(dropdown_list, dropdown_area, &mut self.state);
     }
 
-    pub fn next(&mut self) {
+    fn next(&mut self) {
         if self.db_list.is_empty() {
             return;
         }
@@ -208,7 +218,7 @@ impl DbSelector {
         self.state.select(Some(i));
     }
 
-    pub fn previous(&mut self) {
+    fn previous(&mut self) {
         if self.db_list.is_empty() {
             return;
         }
@@ -225,7 +235,7 @@ impl DbSelector {
         self.state.select(Some(i));
     }
 
-    pub fn toggle(&mut self) {
+    fn toggle(&mut self) {
         self.is_open = !self.is_open;
         if self.is_open && !self.db_list.is_empty() {
             // Select current database when opening
@@ -239,9 +249,5 @@ impl DbSelector {
                 self.state.select(Some(0));
             }
         }
-    }
-
-    pub fn update_db_list(&mut self, db_list: Vec<DbInfo>) {
-        self.db_list = db_list;
     }
 }

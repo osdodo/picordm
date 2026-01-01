@@ -28,6 +28,12 @@ pub enum Message {
     Close,
 }
 
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    None,
+    Selected(PathBuf),
+}
+
 pub struct FileSelector {
     pub current_dir: PathBuf,
     pub dir_entries: Vec<DirEntry>,
@@ -58,25 +64,31 @@ impl FileSelector {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Option<PathBuf> {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::Next => {
                 self.next_entry();
-                None
+                UpdateResult::None
             }
             Message::Previous => {
                 self.previous_entry();
-                None
+                UpdateResult::None
             }
-            Message::Enter => self.enter_selected_entry(),
+            Message::Enter => {
+                if let Some(path) = self.enter_selected_entry() {
+                    UpdateResult::Selected(path)
+                } else {
+                    UpdateResult::None
+                }
+            }
             Message::Show => {
                 self.show();
                 self.is_open = true;
-                None
+                UpdateResult::None
             }
             Message::Close => {
                 self.close();
-                None
+                UpdateResult::None
             }
         }
     }
@@ -203,7 +215,7 @@ impl FileSelector {
         frame.render_widget(instructions, chunks[1]);
     }
 
-    pub fn close(&mut self) {
+    fn close(&mut self) {
         self.is_open = false;
     }
 

@@ -9,7 +9,7 @@ use ratatui::{
 use crate::models::Screen;
 use crate::screens::{connection_screen, dashboard_screen};
 use crate::theme::init_theme_manager;
-use crate::widgets::{footer, settings_dialog::SettingsDialog, settings_storage::load_settings};
+use crate::widgets::{settings_dialog::SettingsDialog, settings_storage::load_settings};
 
 pub struct App {
     pub current_screen: Screen,
@@ -81,30 +81,18 @@ impl App {
             _ => {}
         }
 
-        if self.settings_dialog.is_open && self.settings_dialog.handle_key_event(key) {
-            return Ok(true);
-        }
-
         match self.current_screen {
             Screen::Connection => {
                 if let Some(msg) = self.connection_screen.handle_key_events(key)
                     && let connection_screen::UpdateResult::SwitchScreen(screen, config) =
                         self.connection_screen.update(msg, terminal).await?
                 {
-                    match self.dashboard_screen.load_data(&config, terminal).await {
-                        Err(e) => {
-                            self.connection_screen
-                                .footer
-                                .update(footer::Message::Error(Some(format!(
-                                    "Failed to load dashboard: {}",
-                                    e
-                                ))));
-                            return Ok(true);
-                        }
-                        Ok(_) => {
-                            self.current_screen = screen;
-                        }
-                    }
+                    self.current_screen = screen;
+
+                    let _ = self
+                        .dashboard_screen
+                        .update(dashboard_screen::Message::LoadData(*config), terminal)
+                        .await;
                 }
             }
             Screen::Dashboard => {
@@ -115,6 +103,10 @@ impl App {
                     self.current_screen = screen;
                 }
             }
+        }
+
+        if self.settings_dialog.is_open {
+            self.settings_dialog.handle_key_event(key);
         }
 
         Ok(true)

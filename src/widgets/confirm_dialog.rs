@@ -11,19 +11,26 @@ use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Show { title: String, message: String },
     Confirm,
     Cancel,
 }
 
-pub struct DeleteDialog {
-    pub selected_count: usize,
+pub struct ConfirmDialog {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
     pub is_open: bool,
 }
 
-impl DeleteDialog {
+impl ConfirmDialog {
     pub fn new() -> Self {
         Self {
-            selected_count: 0,
+            title: "Confirm".to_string(),
+            message: String::new(),
+            confirm_label: "Yes".to_string(),
+            cancel_label: "Cancel".to_string(),
             is_open: false,
         }
     }
@@ -41,6 +48,11 @@ impl DeleteDialog {
 
     pub fn update(&mut self, msg: Message) {
         match msg {
+            Message::Show { title, message } => {
+                self.title = title;
+                self.message = message;
+                self.is_open = true;
+            }
             Message::Confirm => {
                 self.is_open = false;
             }
@@ -59,7 +71,7 @@ impl DeleteDialog {
 
         let block = Block::default()
             .title(Line::from(vec![Span::styled(
-                "Confirm Delete",
+                &self.title,
                 Style::default()
                     .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -76,25 +88,20 @@ impl DeleteDialog {
             .margin(2)
             .constraints([
                 Constraint::Min(1),    // Top spacing
-                Constraint::Length(1), // Message
+                Constraint::Min(1),    // Message (can be multiple lines)
                 Constraint::Min(1),    // Middle spacing
                 Constraint::Length(1), // Buttons hint
             ])
             .split(area);
 
-        let message = format!(
-            "Are you sure you want to delete {} key{}?",
-            self.selected_count,
-            if self.selected_count == 1 { "" } else { "s" }
-        );
-
         let message_widget = Paragraph::new(Line::from(Span::styled(
-            message,
+            &self.message,
             Style::default()
                 .fg(colors.text_primary)
                 .add_modifier(Modifier::BOLD),
         )))
-        .alignment(ratatui::layout::Alignment::Center);
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
 
         frame.render_widget(message_widget, chunks[1]);
 
@@ -105,26 +112,23 @@ impl DeleteDialog {
                     .fg(colors.error)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" Yes, delete  ", Style::default().fg(colors.text_primary)),
+            Span::styled(
+                format!(" {}, ", self.confirm_label),
+                Style::default().fg(colors.text_primary),
+            ),
             Span::styled(
                 "[n/Esc]",
                 Style::default()
                     .fg(colors.accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" Cancel", Style::default().fg(colors.text_primary)),
+            Span::styled(
+                format!(" {}", self.cancel_label),
+                Style::default().fg(colors.text_primary),
+            ),
         ]))
         .alignment(ratatui::layout::Alignment::Center);
 
         frame.render_widget(buttons_hint, chunks[3]);
-    }
-
-    pub fn open(&mut self, count: usize) {
-        self.selected_count = count;
-        self.is_open = true;
-    }
-
-    pub fn close(&mut self) {
-        self.is_open = false;
     }
 }

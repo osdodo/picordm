@@ -57,10 +57,10 @@ impl Footer {
     fn render_error(&self, frame: &mut Frame, area: Rect, error: &str) {
         let colors = get_colors();
 
-        let error_widget = Paragraph::new(Line::from(vec![
-            Span::styled("⚠ Error: ", Style::default().fg(colors.error)),
-            Span::styled(error, Style::default().fg(colors.text_primary)),
-        ]))
+        let error_widget = Paragraph::new(Line::from(Span::styled(
+            format!(" Error: {}", error),
+            Style::default().fg(colors.error),
+        )))
         .block(
             Block::default()
                 .borders(Borders::ALL)

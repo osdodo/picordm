@@ -267,7 +267,6 @@ async fn import_redis_key(key: &str, key_data: &RedisKeyData, database: u32) -> 
 }
 
 pub fn get_export_path(default_name: &str) -> std::path::PathBuf {
-    // Try to use desktop directory, fallback to current directory
     if let Some(desktop_dir) = dirs::desktop_dir() {
         desktop_dir.join(default_name)
     } else {

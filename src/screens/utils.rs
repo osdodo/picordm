@@ -1,8 +1,7 @@
-use anyhow::Result;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
+    style::{Color, Style},
     widgets::Block,
 };
 
@@ -29,19 +28,11 @@ pub fn centered_rect_fixed_size(width: u16, height: u16, r: Rect) -> Rect {
 }
 
 pub fn render_background(frame: &mut Frame, area: Rect) {
-    frame.render_widget(
-        Block::default().style(Style::default().bg(get_colors().bg_main)),
-        area,
-    );
-}
+    let bg_color = get_colors().bg_main;
+    // If the background color is transparent, ignore it.
+    if bg_color == Color::Reset {
+        return;
+    }
 
-pub fn draw_with_background<F>(terminal: &mut ratatui::DefaultTerminal, view: F) -> Result<()>
-where
-    F: FnOnce(&mut Frame),
-{
-    terminal.draw(|frame| {
-        render_background(frame, frame.area());
-        view(frame);
-    })?;
-    Ok(())
+    frame.render_widget(Block::default().style(Style::default().bg(bg_color)), area);
 }

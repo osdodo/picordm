@@ -9,6 +9,7 @@ use ratatui::{
 
 use crate::models::ConnectionConfig;
 use crate::theme::get_colors;
+use crate::widgets::connection_storage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -19,6 +20,14 @@ pub enum Message {
     QuickSelect(usize),
     ToggleSearch,
     UpdateSearch(String),
+    Show(Option<String>),
+    SetOpen(bool),
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    None,
+    Selected(Box<ConnectionConfig>),
 }
 
 pub struct ConnectionSwitcher {
@@ -100,41 +109,49 @@ impl ConnectionSwitcher {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Option<ConnectionConfig> {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::Close => {
                 self.is_open = false;
                 self.is_search_mode = false;
                 self.search.clear();
-                None
+                UpdateResult::None
             }
             Message::ToggleSearch => {
                 self.is_search_mode = !self.is_search_mode;
                 if !self.is_search_mode {
                     self.search.clear();
                 }
-                None
+                UpdateResult::None
             }
             Message::Next => {
                 self.next();
-                None
+                UpdateResult::None
             }
             Message::Previous => {
                 self.previous();
-                None
+                UpdateResult::None
             }
             Message::Select => {
                 self.is_open = false;
                 self.is_search_mode = false;
                 self.search.clear();
-                self.get_selected().cloned()
+                if let Some(config) = self.get_selected().cloned() {
+                    UpdateResult::Selected(Box::new(config))
+                } else {
+                    UpdateResult::None
+                }
             }
             Message::QuickSelect(index) => {
                 self.is_open = false;
                 self.is_search_mode = false;
                 self.search.clear();
                 self.state.select(Some(index));
-                self.get_selected().cloned()
+                if let Some(config) = self.get_selected().cloned() {
+                    UpdateResult::Selected(Box::new(config))
+                } else {
+                    UpdateResult::None
+                }
             }
             Message::UpdateSearch(text) => {
                 self.search = text;
@@ -143,7 +160,20 @@ impl ConnectionSwitcher {
                 if let Some((idx, _)) = filtered.first() {
                     self.state.select(Some(*idx));
                 }
-                None
+                UpdateResult::None
+            }
+            Message::Show(current) => {
+                let connections = connection_storage::load_connections();
+                self.open(connections, current);
+                UpdateResult::None
+            }
+            Message::SetOpen(open) => {
+                self.is_open = open;
+                if !open {
+                    self.is_search_mode = false;
+                    self.search.clear();
+                }
+                UpdateResult::None
             }
         }
     }
@@ -387,7 +417,7 @@ impl ConnectionSwitcher {
         );
     }
 
-    pub fn open(&mut self, connections: Vec<ConnectionConfig>, current: Option<String>) {
+    fn open(&mut self, connections: Vec<ConnectionConfig>, current: Option<String>) {
         self.connections = connections;
         self.current_connection_name = current.clone();
         self.search.clear();

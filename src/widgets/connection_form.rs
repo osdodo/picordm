@@ -37,6 +37,8 @@ pub enum Message {
     ToggleCheckbox,
     Save,
     Cancel,
+    OpenNew,
+    OpenEdit(Box<ConnectionConfig>),
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +89,13 @@ impl ConnectionForm {
         }
     }
 
+    fn is_checkbox_field(&self) -> bool {
+        matches!(
+            self.editing_field,
+            FormField::UseTls | FormField::AllowInsecureTls
+        )
+    }
+
     pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
         if !self.is_open {
             return None;
@@ -95,30 +104,15 @@ impl ConnectionForm {
             (KeyCode::Tab, _) => Some(Message::ToggleClusterMode),
             (KeyCode::Up, _) => Some(Message::PreviousField),
             (KeyCode::Down, _) => Some(Message::NextField),
-            (KeyCode::Char(c), KeyModifiers::NONE) | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 Some(Message::UpdateField(c))
             }
             (KeyCode::Backspace, _) => Some(Message::Backspace),
-            (KeyCode::Enter, _) => {
-                if matches!(
-                    self.editing_field,
-                    FormField::UseTls | FormField::AllowInsecureTls
-                ) {
-                    Some(Message::ToggleCheckbox)
-                } else {
-                    Some(Message::NextField)
-                }
+            (KeyCode::Enter, _) | (KeyCode::Char(' '), _) if self.is_checkbox_field() => {
+                Some(Message::ToggleCheckbox)
             }
-            (KeyCode::Char(' '), _) => {
-                if matches!(
-                    self.editing_field,
-                    FormField::UseTls | FormField::AllowInsecureTls
-                ) {
-                    Some(Message::ToggleCheckbox)
-                } else {
-                    Some(Message::UpdateField(' '))
-                }
-            }
+            (KeyCode::Enter, _) => Some(Message::NextField),
+            (KeyCode::Char(' '), _) => Some(Message::UpdateField(' ')),
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => Some(Message::Save),
             (KeyCode::Esc, _) => Some(Message::Cancel),
             _ => None,
@@ -153,12 +147,8 @@ impl ConnectionForm {
             }
             Message::Save => {
                 if self.validate() {
-                    let db_aliases = serde_json::from_str(&self.db_aliases).unwrap_or_else(|_| {
-                        let mut map = std::collections::HashMap::new();
-                        map.insert(0, "0".to_string());
-                        map
-                    });
-
+                    let db_aliases = serde_json::from_str(&self.db_aliases)
+                        .unwrap_or_else(|_| HashMap::from([(0, "0".to_string())]));
                     let config = self.to_connection_config(db_aliases);
                     self.is_open = false;
                     UpdateResult::Saved(Box::new(config))
@@ -169,6 +159,14 @@ impl ConnectionForm {
             Message::Cancel => {
                 self.is_open = false;
                 UpdateResult::Cancelled
+            }
+            Message::OpenNew => {
+                self.open_new();
+                UpdateResult::None
+            }
+            Message::OpenEdit(config) => {
+                self.open_edit(&config);
+                UpdateResult::None
             }
         }
     }
@@ -191,7 +189,7 @@ impl ConnectionForm {
             )]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(colors.border_default))
+            .border_style(Style::default().fg(colors.border_active))
             .style(Style::default().bg(colors.bg_dialog));
 
         frame.render_widget(block, area);
@@ -211,12 +209,12 @@ impl ConnectionForm {
         self.render_form_fields(frame, form_area)
     }
 
-    pub fn open_new(&mut self) {
+    fn open_new(&mut self) {
         *self = Self::new();
         self.is_open = true;
     }
 
-    pub fn open_edit(&mut self, config: &ConnectionConfig) {
+    fn open_edit(&mut self, config: &ConnectionConfig) {
         *self = Self::from_connection_config(config);
         self.is_open = true;
     }
@@ -253,7 +251,7 @@ impl ConnectionForm {
         fields
     }
 
-    pub fn validate(&mut self) -> bool {
+    fn validate(&mut self) -> bool {
         self.validation_error = None;
 
         if self.name.trim().is_empty() {
@@ -284,17 +282,48 @@ impl ConnectionForm {
         true
     }
 
-    pub fn to_connection_config(&self, db_aliases: HashMap<u32, String>) -> ConnectionConfig {
-        let cluster_nodes = if self.is_cluster {
-            self.cluster_nodes
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
+    fn parse_db_aliases(&self) -> HashMap<u32, String> {
+        if self.db_aliases.trim().is_empty() {
+            HashMap::new()
         } else {
-            Vec::new()
+            serde_json::from_str(&self.db_aliases).unwrap_or_default()
+        }
+    }
+
+    fn generate_name_if_empty(&mut self, existing_names: &[String]) {
+        if !self.name.is_empty() {
+            return;
+        }
+
+        let (base_name, suffix) = if self.is_cluster {
+            let first_node = self
+                .cluster_nodes
+                .split(',')
+                .next()
+                .unwrap_or("cluster")
+                .trim();
+            let base = first_node.split(':').next().unwrap_or(first_node);
+            (base.to_string(), "-cluster".to_string())
+        } else {
+            (self.host.clone(), String::new())
         };
 
+        let name_exists = existing_names.iter().any(|name| {
+            name == &base_name || name.starts_with(&format!("{}{}", base_name, suffix))
+        });
+        self.name = if name_exists {
+            format!(
+                "{}{}-{}",
+                base_name,
+                suffix,
+                chrono::Local::now().format("%H%M%S")
+            )
+        } else {
+            format!("{}{}", base_name, suffix)
+        };
+    }
+
+    fn to_connection_config(&self, db_aliases: HashMap<u32, String>) -> ConnectionConfig {
         ConnectionConfig {
             id: self
                 .editing_connection_id
@@ -307,18 +336,23 @@ impl ConnectionForm {
             username: self.username.clone().filter(|s| !s.is_empty()),
             use_tls: self.use_tls,
             allow_insecure_tls: self.allow_insecure_tls,
-            sni: if self.sni.is_empty() {
-                None
-            } else {
-                Some(self.sni.clone())
-            },
+            sni: (!self.sni.is_empty()).then(|| self.sni.clone()),
             is_cluster: self.is_cluster,
-            cluster_nodes,
+            cluster_nodes: if self.is_cluster {
+                self.cluster_nodes
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            } else {
+                Vec::new()
+            },
             db_aliases,
         }
     }
 
-    pub fn from_connection_config(config: &ConnectionConfig) -> Self {
+    fn from_connection_config(config: &ConnectionConfig) -> Self {
         Self {
             name: config.name.clone(),
             host: config.host.clone(),
@@ -339,7 +373,7 @@ impl ConnectionForm {
         }
     }
 
-    pub fn from_connection_string(input: &str) -> Result<Self, String> {
+    fn from_connection_string(input: &str) -> Result<Self, String> {
         let mut form = Self::new();
         Self::parse_connection_string(input, &mut form);
 
@@ -397,6 +431,16 @@ impl ConnectionForm {
         Ok(form)
     }
 
+    pub fn import_from_string(
+        input: &str,
+        existing_names: &[String],
+    ) -> Result<ConnectionConfig, String> {
+        let mut form = Self::from_connection_string(input)?;
+        form.generate_name_if_empty(existing_names);
+        let db_aliases = form.parse_db_aliases();
+        Ok(form.to_connection_config(db_aliases))
+    }
+
     fn parse_connection_string(input: &str, form: &mut Self) {
         let mut url_to_parse = String::new();
         let mut override_host = None;
@@ -411,47 +455,45 @@ impl ConnectionForm {
             let parts: Vec<&str> = input.split_whitespace().collect();
             let mut i = 1;
             while i < parts.len() {
-                match parts[i] {
-                    "-c" | "--cluster" => {
-                        is_cluster_mode = true;
+                let take_next = |i: &mut usize| -> Option<String> {
+                    if *i + 1 < parts.len() {
+                        *i += 1;
+                        Some(parts[*i].to_string())
+                    } else {
+                        None
                     }
+                };
+                match parts[i] {
+                    "-c" | "--cluster" => is_cluster_mode = true,
                     "-u" => {
-                        if i + 1 < parts.len() {
-                            url_to_parse = parts[i + 1].to_string();
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            url_to_parse = v;
                         }
                     }
                     "-h" => {
-                        if i + 1 < parts.len() {
-                            override_host = Some(parts[i + 1].to_string());
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            override_host = Some(v);
                         }
                     }
                     "-p" => {
-                        if i + 1 < parts.len() {
-                            override_port = Some(parts[i + 1].to_string());
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            override_port = Some(v);
                         }
                     }
                     "-a" => {
-                        if i + 1 < parts.len() {
-                            override_pass = Some(parts[i + 1].to_string());
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            override_pass = Some(v);
                         }
                     }
                     "--user" => {
-                        if i + 1 < parts.len() {
-                            override_user = Some(parts[i + 1].to_string());
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            override_user = Some(v);
                         }
                     }
-                    "--tls" => {
-                        override_tls = true;
-                    }
+                    "--tls" => override_tls = true,
                     "--sni" => {
-                        if i + 1 < parts.len() {
-                            override_sni = Some(parts[i + 1].to_string());
-                            i += 1;
+                        if let Some(v) = take_next(&mut i) {
+                            override_sni = Some(v);
                         }
                     }
                     _ => {}
@@ -486,24 +528,23 @@ impl ConnectionForm {
             }
         }
 
+        // Apply overrides
         if let Some(h) = override_host {
             if is_cluster_mode {
-                let port = override_port.as_deref().unwrap_or("6379");
-                form.cluster_nodes = format!("{}:{}", h, port);
+                form.cluster_nodes =
+                    format!("{}:{}", h, override_port.as_deref().unwrap_or("6379"));
             } else {
                 form.host = h;
             }
         }
-        if let Some(p) = override_port
-            && !is_cluster_mode
-        {
+        if let Some(p) = override_port.filter(|_| !is_cluster_mode) {
             form.port = p;
         }
         if let Some(u) = override_user {
             form.username = Some(u);
         }
-        if let Some(pass) = override_pass {
-            form.password = Some(pass);
+        if let Some(p) = override_pass {
+            form.password = Some(p);
         }
         if override_tls {
             form.use_tls = true;
@@ -515,34 +556,29 @@ impl ConnectionForm {
         form.is_cluster = is_cluster_mode;
     }
 
+    fn parse_auth(auth_str: &str, form: &mut Self) {
+        if let Some(idx) = auth_str.find(':') {
+            form.username = Some(auth_str[..idx].to_string());
+            form.password = Some(auth_str[idx + 1..].to_string());
+        } else {
+            form.password = Some(auth_str.to_string());
+        }
+    }
+
     fn parse_cluster_nodes(input: &str, form: &mut Self, _scheme: &str) {
         let nodes_part = if let Some(idx) = input.rfind('@') {
-            let auth_part = &input[..idx];
-            if let Some(colon_idx) = auth_part.find(':') {
-                form.username = Some(auth_part[..colon_idx].to_string());
-                form.password = Some(auth_part[colon_idx + 1..].to_string());
-            } else {
-                form.password = Some(auth_part.to_string());
-            }
+            Self::parse_auth(&input[..idx], form);
             &input[idx + 1..]
         } else {
             input
         };
 
-        let nodes: Vec<&str> = nodes_part
+        form.cluster_nodes = nodes_part
             .split(',')
-            .map(|node| {
-                let node = node.trim();
-                if let Some(idx) = node.find('/') {
-                    &node[..idx]
-                } else {
-                    node
-                }
-            })
+            .map(|node| node.trim().split('/').next().unwrap_or(node.trim()))
             .filter(|s| !s.is_empty())
-            .collect();
-
-        form.cluster_nodes = nodes.join(", ");
+            .collect::<Vec<_>>()
+            .join(", ");
     }
 
     fn parse_authority(authority: &str, form: &mut Self) {
@@ -553,20 +589,10 @@ impl ConnectionForm {
         };
 
         if let Some(up) = user_pass {
-            if let Some(idx) = up.find(':') {
-                form.username = Some(up[..idx].to_string());
-                form.password = Some(up[idx + 1..].to_string());
-            } else {
-                form.password = Some(up.to_string());
-            }
+            Self::parse_auth(up, form);
         }
 
-        let host_port_no_db = if let Some(idx) = host_port.find('/') {
-            &host_port[..idx]
-        } else {
-            host_port
-        };
-
+        let host_port_no_db = host_port.split('/').next().unwrap_or(host_port);
         if let Some(idx) = host_port_no_db.rfind(':') {
             form.host = host_port_no_db[..idx].to_string();
             form.port = host_port_no_db[idx + 1..].to_string();
@@ -577,18 +603,22 @@ impl ConnectionForm {
     }
 
     fn is_valid_host(host: &str) -> bool {
+        // Check IPv4
         if host.split('.').count() == 4 && host.split('.').all(|part| part.parse::<u8>().is_ok()) {
             return true;
         }
 
+        // Basic validation
         if host.is_empty() || host.len() > 253 {
             return false;
         }
 
+        // Check invalid characters
         if host.contains(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_') {
             return false;
         }
 
+        // Check boundaries
         if host.starts_with('-')
             || host.ends_with('-')
             || host.starts_with('.')
@@ -597,75 +627,38 @@ impl ConnectionForm {
             return false;
         }
 
-        for label in host.split('.') {
-            if label.is_empty() || label.len() > 63 {
-                return false;
-            }
-            if label.starts_with('-') || label.ends_with('-') {
-                return false;
-            }
-        }
+        // Validate labels
+        host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
+    }
 
-        true
+    fn get_field_mut(&mut self) -> Option<&mut String> {
+        match self.editing_field {
+            FormField::Name => Some(&mut self.name),
+            FormField::Host => Some(&mut self.host),
+            FormField::Port => Some(&mut self.port),
+            FormField::Username => self.username.get_or_insert_with(String::new).into(),
+            FormField::Password => self.password.get_or_insert_with(String::new).into(),
+            FormField::Sni => Some(&mut self.sni),
+            FormField::ClusterNodes => Some(&mut self.cluster_nodes),
+            FormField::DbAliases => Some(&mut self.db_aliases),
+            FormField::UseTls | FormField::AllowInsecureTls => None,
+        }
     }
 
     fn update_current_field(&mut self, c: char) {
-        match self.editing_field {
-            FormField::Name => self.name.push(c),
-            FormField::Host => self.host.push(c),
-            FormField::Port => self.port.push(c),
-            FormField::Username => {
-                if let Some(ref mut username) = self.username {
-                    username.push(c);
-                } else {
-                    self.username = Some(c.to_string());
-                }
-            }
-            FormField::Password => {
-                if let Some(ref mut password) = self.password {
-                    password.push(c);
-                } else {
-                    self.password = Some(c.to_string());
-                }
-            }
-            FormField::Sni => self.sni.push(c),
-            FormField::ClusterNodes => self.cluster_nodes.push(c),
-            FormField::DbAliases => self.db_aliases.push(c),
-            FormField::UseTls | FormField::AllowInsecureTls => {}
+        if let Some(field) = self.get_field_mut() {
+            field.push(c);
         }
     }
 
     fn backspace_current_field(&mut self) {
-        match self.editing_field {
-            FormField::Name => {
-                self.name.pop();
-            }
-            FormField::Host => {
-                self.host.pop();
-            }
-            FormField::Port => {
-                self.port.pop();
-            }
-            FormField::Username => {
-                if let Some(ref mut username) = self.username {
-                    username.pop();
-                }
-            }
-            FormField::Password => {
-                if let Some(ref mut password) = self.password {
-                    password.pop();
-                }
-            }
-            FormField::Sni => {
-                self.sni.pop();
-            }
-            FormField::ClusterNodes => {
-                self.cluster_nodes.pop();
-            }
-            FormField::DbAliases => {
-                self.db_aliases.pop();
-            }
-            FormField::UseTls | FormField::AllowInsecureTls => {}
+        if let Some(field) = self.get_field_mut() {
+            field.pop();
         }
     }
 
@@ -679,34 +672,29 @@ impl ConnectionForm {
 
     fn render_mode_tabs(&self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
-
-        let tab_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        };
-
-        let standalone_style = if !self.is_cluster {
-            Style::default()
-                .fg(colors.border_active)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            Style::default().fg(colors.text_secondary)
-        };
-
-        let cluster_style = if self.is_cluster {
-            Style::default()
-                .fg(colors.border_active)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            Style::default().fg(colors.text_secondary)
-        };
+        let active_style = Style::default()
+            .fg(colors.border_active)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        let inactive_style = Style::default().fg(colors.text_secondary);
 
         let tabs = Line::from(vec![
-            Span::styled("[ Standalone ]", standalone_style),
+            Span::styled(
+                "[ Standalone ]",
+                if !self.is_cluster {
+                    active_style
+                } else {
+                    inactive_style
+                },
+            ),
             Span::raw("  "),
-            Span::styled("[ Cluster ]", cluster_style),
+            Span::styled(
+                "[ Cluster ]",
+                if self.is_cluster {
+                    active_style
+                } else {
+                    inactive_style
+                },
+            ),
             Span::raw("  "),
             Span::styled(
                 "(Press Tab to switch)",
@@ -716,37 +704,31 @@ impl ConnectionForm {
             ),
         ]);
 
-        frame.render_widget(Paragraph::new(tabs), tab_area);
+        frame.render_widget(
+            Paragraph::new(tabs),
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            },
+        );
     }
 
     fn render_form_fields(&self, frame: &mut Frame, area: Rect) -> Option<(u16, u16)> {
-        let has_error = self.validation_error.is_some();
-
-        let constraints = if has_error {
-            vec![
-                Constraint::Length(3), // Name
-                Constraint::Length(3), // Host/Port or Cluster
-                Constraint::Length(1), // Spacer
-                Constraint::Length(3), // Username/Password
-                Constraint::Length(1), // Spacer
-                Constraint::Length(3), // TLS options
-                Constraint::Length(3), // SNI
-                Constraint::Length(3), // DB Aliases
-                Constraint::Length(1), // Spacer
-                Constraint::Length(3), // Error
-            ]
-        } else {
-            vec![
-                Constraint::Length(3), // Name
-                Constraint::Length(3), // Host/Port or Cluster
-                Constraint::Length(1), // Spacer
-                Constraint::Length(3), // Username/Password
-                Constraint::Length(1), // Spacer
-                Constraint::Length(3), // TLS options
-                Constraint::Length(3), // SNI
-                Constraint::Length(3), // DB Aliases
-            ]
-        };
+        let mut constraints = vec![
+            Constraint::Length(3), // Name
+            Constraint::Length(3), // Host/Port or Cluster
+            Constraint::Length(1), // Spacer
+            Constraint::Length(3), // Username/Password
+            Constraint::Length(1), // Spacer
+            Constraint::Length(3), // TLS options
+            Constraint::Length(3), // SNI
+            Constraint::Length(3), // DB Aliases
+        ];
+        if self.validation_error.is_some() {
+            constraints.extend([Constraint::Length(1), Constraint::Length(3)]); // Spacer + Error
+        }
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -757,23 +739,23 @@ impl ConnectionForm {
         let mut idx = 0;
 
         // Connection Name
-        if let Some(pos) = self.render_text_field(
-            frame,
-            chunks[idx],
-            "Connection Name",
-            &self.name,
-            FormField::Name,
-            true,
-            None,
-            "...",
-        ) {
-            cursor_pos = Some(pos);
-        }
+        cursor_pos = self
+            .render_text_field(
+                frame,
+                chunks[idx],
+                "Connection Name",
+                &self.name,
+                FormField::Name,
+                true,
+                None,
+                "...",
+            )
+            .or(cursor_pos);
         idx += 1;
 
         // Host & Port OR Cluster Nodes
-        if self.is_cluster {
-            if let Some(pos) = self.render_text_field(
+        cursor_pos = if self.is_cluster {
+            self.render_text_field(
                 frame,
                 chunks[idx],
                 "Cluster Nodes",
@@ -782,18 +764,16 @@ impl ConnectionForm {
                 true,
                 Some("e.g. host1:6379, host2:6379"),
                 "...",
-            ) {
-                cursor_pos = Some(pos);
-            }
-        } else if let Some(pos) = self.render_host_port_fields(frame, chunks[idx]) {
-            cursor_pos = Some(pos);
-        }
+            )
+            .or(cursor_pos)
+        } else {
+            self.render_host_port_fields(frame, chunks[idx])
+                .or(cursor_pos)
+        };
         idx += 2; // Skip spacer
 
         // Username & Password
-        if let Some(pos) = self.render_auth_fields(frame, chunks[idx]) {
-            cursor_pos = Some(pos);
-        }
+        cursor_pos = self.render_auth_fields(frame, chunks[idx]).or(cursor_pos);
         idx += 2; // Skip spacer
 
         // TLS Options
@@ -801,53 +781,51 @@ impl ConnectionForm {
         idx += 1;
 
         // SNI
-        if let Some(pos) = self.render_text_field(
-            frame,
-            chunks[idx],
-            "SNI",
-            &self.sni,
-            FormField::Sni,
-            false,
-            Some("optional"),
-            "...",
-        ) {
-            cursor_pos = Some(pos);
-        }
+        cursor_pos = self
+            .render_text_field(
+                frame,
+                chunks[idx],
+                "SNI",
+                &self.sni,
+                FormField::Sni,
+                false,
+                Some("optional"),
+                "...",
+            )
+            .or(cursor_pos);
         idx += 1;
 
         // DB Aliases
-        if let Some(pos) = self.render_text_field(
-            frame,
-            chunks[idx],
-            "DB Aliases",
-            &self.db_aliases,
-            FormField::DbAliases,
-            false,
-            Some("optional, JSON"),
-            "...",
-        ) {
-            cursor_pos = Some(pos);
-        }
+        cursor_pos = self
+            .render_text_field(
+                frame,
+                chunks[idx],
+                "DB Aliases",
+                &self.db_aliases,
+                FormField::DbAliases,
+                false,
+                Some("optional, JSON"),
+                "...",
+            )
+            .or(cursor_pos);
         idx += 1;
 
         // Validation Error
-        if has_error {
+        if let Some(ref error) = self.validation_error {
             idx += 1; // Skip spacer
-            if let Some(ref error) = self.validation_error {
-                let colors = get_colors();
-                let error_text = Paragraph::new(Line::from(vec![Span::styled(
-                    error,
-                    Style::default().fg(colors.error),
-                )]))
-                .alignment(ratatui::layout::Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .border_style(Style::default().fg(colors.border_default)),
-                );
-                frame.render_widget(error_text, chunks[idx]);
-            }
+            let colors = get_colors();
+            let error_text = Paragraph::new(Line::from(vec![Span::styled(
+                error,
+                Style::default().fg(colors.error),
+            )]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(colors.border_default)),
+            );
+            frame.render_widget(error_text, chunks[idx]);
         }
 
         cursor_pos
@@ -950,6 +928,23 @@ impl ConnectionForm {
         );
     }
 
+    fn get_field_styles(&self, field: FormField) -> (ratatui::style::Color, ratatui::style::Color) {
+        let colors = get_colors();
+        let is_active = self.editing_field == field;
+        (
+            if is_active {
+                colors.border_active
+            } else {
+                colors.border_default
+            },
+            if is_active {
+                colors.border_active
+            } else {
+                colors.text_primary
+            },
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_text_field(
         &self,
@@ -963,18 +958,8 @@ impl ConnectionForm {
         placeholder: &str,
     ) -> Option<(u16, u16)> {
         let colors = get_colors();
+        let (border_color, title_color) = self.get_field_styles(field);
         let is_active = self.editing_field == field;
-        let border_color = if is_active {
-            colors.border_active
-        } else {
-            colors.border_default
-        };
-
-        let title_color = if is_active {
-            colors.border_active
-        } else {
-            colors.text_primary
-        };
 
         let mut title_spans = vec![Span::styled(
             label,
@@ -1023,7 +1008,6 @@ impl ConnectionForm {
 
         frame.render_widget(widget, area);
 
-        // Return cursor position
         if is_active {
             Some((area.x + 1 + value.width() as u16, area.y + 1))
         } else {
@@ -1040,18 +1024,7 @@ impl ConnectionForm {
         field: FormField,
     ) {
         let colors = get_colors();
-        let is_active = self.editing_field == field;
-        let border_color = if is_active {
-            colors.border_active
-        } else {
-            colors.border_default
-        };
-
-        let title_color = if is_active {
-            colors.border_active
-        } else {
-            colors.text_primary
-        };
+        let (border_color, title_color) = self.get_field_styles(field);
 
         let title_span = Line::from(vec![Span::styled(
             label,

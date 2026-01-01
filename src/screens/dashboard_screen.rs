@@ -1,24 +1,26 @@
 use anyhow::Result;
 use ratatui::{
-    Frame,
+    DefaultTerminal, Frame,
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::Clear,
+    style::{Modifier, Style},
+    text::Span,
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
+use tokio::time::{Duration, sleep};
 
-use crate::models::{DbInfo, Screen, ServerInfo, ViewMode};
+use crate::models::{ConnectionConfig, Screen, ViewMode};
 use crate::screens::{
     impex,
-    utils::{centered_rect_fixed_size, draw_with_background, render_background},
+    utils::{centered_rect_fixed_size, render_background},
 };
 use crate::service::get_redis_service;
 use crate::theme::get_colors;
 use crate::widgets::{
     command_mode::{self, CommandMode},
-    connection_storage,
-    connection_switcher::ConnectionSwitcher,
+    confirm_dialog::{self, ConfirmDialog},
+    connection_switcher::{self, ConnectionSwitcher},
     db_selector::{self, DbSelector},
-    delete_dialog::{self, DeleteDialog},
     file_selector::{self, FileSelector},
     footer::{self, Footer},
     header::{self, Header},
@@ -30,24 +32,20 @@ use crate::widgets::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    LoadData(ConnectionConfig),
     KeyList(key_list::Message),
-    SearchBox(search_box::Message),
-    DbSelector(db_selector::Message),
-    ToggleDbSelector,
-    DeleteDialog(delete_dialog::Message),
-    ConnectionSwitcherKey(KeyEvent),
-    FileSelector(file_selector::Message),
     KeyContentEditor(key_content_editor::Message),
-    CommandMode(command_mode::Message),
-
+    SearchBox(search_box::Message),
+    ConfirmDialog(confirm_dialog::Message),
+    RequestDeleteConfirmation,
+    DbSelector(db_selector::Message),
     Disconnect,
-    OpenConnectionSwitcher,
+    ConnectionSwitcher(connection_switcher::Message),
     RefreshKeys,
     RefreshServerInfo,
     ExportData,
-    EnterCommandMode,
-    ExitKeyContent,
-    ExitCommandMode,
+    FileSelector(file_selector::Message),
+    CommandMode(command_mode::Message),
 }
 
 #[derive(Debug)]
@@ -64,7 +62,7 @@ pub struct DashboardScreen {
     pub key_list: KeyList,
     pub search_box: SearchBox,
     pub db_selector: DbSelector,
-    pub delete_dialog: DeleteDialog,
+    pub confirm_dialog: ConfirmDialog,
     pub progress_dialog: ProgressDialog,
     pub connection_switcher: ConnectionSwitcher,
     pub file_selector: FileSelector,
@@ -84,7 +82,7 @@ impl DashboardScreen {
             key_list: KeyList::new(),
             search_box: SearchBox::new("Search Keys"),
             db_selector: DbSelector::new(),
-            delete_dialog: DeleteDialog::new(),
+            confirm_dialog: ConfirmDialog::new(),
             progress_dialog: ProgressDialog::new(),
             connection_switcher: ConnectionSwitcher::new(),
             file_selector: FileSelector::new(),
@@ -96,21 +94,27 @@ impl DashboardScreen {
     pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
         match (key.code, key.modifiers.contains(KeyModifiers::CONTROL)) {
             (KeyCode::Char('b'), true) => return Some(Message::Disconnect),
-            (KeyCode::Char('t'), true) => return Some(Message::OpenConnectionSwitcher),
+            (KeyCode::Char('t'), true) => {
+                return Some(Message::ConnectionSwitcher(
+                    connection_switcher::Message::Show(
+                        self.header.connection_name.as_ref().cloned(),
+                    ),
+                ));
+            }
             (KeyCode::F(5), _) => return Some(Message::RefreshServerInfo),
             _ => {}
         }
 
-        if self.delete_dialog.is_open {
-            if let Some(msg) = self.delete_dialog.handle_key_events(key) {
-                return Some(Message::DeleteDialog(msg));
+        if self.confirm_dialog.is_open {
+            if let Some(msg) = self.confirm_dialog.handle_key_events(key) {
+                return Some(Message::ConfirmDialog(msg));
             }
             return None;
         }
 
         if self.connection_switcher.is_open {
-            if self.connection_switcher.handle_key_events(key).is_some() {
-                return Some(Message::ConnectionSwitcherKey(key));
+            if let Some(msg) = self.connection_switcher.handle_key_events(key) {
+                return Some(Message::ConnectionSwitcher(msg));
             }
             return None;
         }
@@ -129,7 +133,6 @@ impl DashboardScreen {
             return None;
         }
 
-        // Handle key events based on view mode
         match self.view_mode {
             ViewMode::KeyList => {
                 // Search box focus
@@ -149,208 +152,167 @@ impl DashboardScreen {
                     (KeyCode::Char('/'), _) => {
                         Some(Message::SearchBox(search_box::Message::ToggleFocus))
                     }
-                    (KeyCode::Char('n'), KeyModifiers::CONTROL) => Some(Message::ToggleDbSelector),
+                    (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                        Some(Message::DbSelector(db_selector::Message::Toggle))
+                    }
                     (KeyCode::Backspace | KeyCode::Delete, _) => {
-                        Some(Message::DeleteDialog(delete_dialog::Message::Confirm))
+                        Some(Message::RequestDeleteConfirmation)
                     }
                     (KeyCode::Char('e'), KeyModifiers::CONTROL) => Some(Message::ExportData),
                     (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
                         Some(Message::FileSelector(file_selector::Message::Show))
                     }
                     (KeyCode::Char('r'), KeyModifiers::CONTROL) => Some(Message::RefreshKeys),
-                    (KeyCode::Char('>'), _) => Some(Message::EnterCommandMode),
+                    (KeyCode::Char('>'), _) => Some(Message::CommandMode(
+                        command_mode::Message::Enter(self.db_selector.current_db_index),
+                    )),
                     _ => None,
                 }
             }
-            ViewMode::KeyContent => {
-                if let Some(msg) = self.key_content_editor.handle_key_events(key) {
-                    Some(Message::KeyContentEditor(msg))
-                } else {
-                    // Esc in Normal mode will return None, exit KeyContent
-                    if key.code == KeyCode::Esc {
-                        Some(Message::ExitKeyContent)
-                    } else {
-                        None
-                    }
-                }
-            }
-            ViewMode::CommandMode => {
-                // Esc return to list
-                if key.code == KeyCode::Esc {
-                    // If in output area and not in Normal mode, pass to widget first
-                    if self.command_mode.focus_on_output
-                        && self.command_mode.editor_state.mode != edtui::EditorMode::Normal
-                    {
-                        if let Some(msg) = self.command_mode.handle_key_events(key) {
-                            Some(Message::CommandMode(msg))
-                        } else {
-                            Some(Message::ExitCommandMode)
-                        }
-                    } else {
-                        Some(Message::ExitCommandMode)
-                    }
-                } else {
-                    self.command_mode
-                        .handle_key_events(key)
-                        .map(Message::CommandMode)
-                }
-            }
+            ViewMode::KeyContent => self
+                .key_content_editor
+                .handle_key_events(key)
+                .map(Message::KeyContentEditor),
+            ViewMode::CommandMode => self
+                .command_mode
+                .handle_key_events(key)
+                .map(Message::CommandMode),
         }
     }
 
     pub async fn update(
         &mut self,
         msg: Message,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut DefaultTerminal,
     ) -> Result<UpdateResult> {
         match msg {
-            Message::KeyList(list_msg) => match list_msg {
+            Message::LoadData(config) => {
+                self.header
+                    .update(header::Message::UpdateConnectionName(Some(
+                        config.name.clone(),
+                    )));
+                if let Err(e) = self.load_data(terminal).await {
+                    self.footer.update(footer::Message::Error(Some(format!(
+                        "Failed to load dashboard: {}",
+                        e
+                    ))));
+                }
+                Ok(UpdateResult::Continue)
+            }
+            Message::KeyList(msg) => match msg {
                 key_list::Message::Select => {
-                    if let Some(key) = self.key_list.update(list_msg) {
-                        // LoadKeyValue action
+                    if let key_list::UpdateResult::Selected(key) = self.key_list.update(msg) {
                         self.view_mode = ViewMode::KeyContent;
-                        self.key_content_editor.set_loading_value(true);
-                        draw_with_background(terminal, |frame| self.view(frame))?;
+                        self.key_list.update(key_list::Message::SetFocus(false));
+                        self.key_content_editor
+                            .update(key_content_editor::Message::SetLoadingValue(true));
+                        terminal.draw(|frame| {
+                            self.view(frame);
+                        })?;
 
-                        let db_index = self.get_current_db_index();
+                        let db_index = self.db_selector.current_db_index;
                         match get_redis_service().get_value(&key, db_index).await {
                             Ok(value) => {
-                                self.key_content_editor.load_key_value(key, value);
+                                self.key_content_editor
+                                    .update(key_content_editor::Message::LoadKeyValue(key, value));
                             }
                             Err(e) => {
                                 self.footer.update(footer::Message::Error(Some(format!(
                                     "Failed to fetch value: {}",
                                     e
                                 ))));
-                                self.key_content_editor.set_loading_value(false);
+                                self.key_content_editor
+                                    .update(key_content_editor::Message::SetLoadingValue(false));
                             }
                         }
-                        Ok(UpdateResult::Continue)
-                    } else {
-                        Ok(UpdateResult::Continue)
                     }
+
+                    Ok(UpdateResult::Continue)
                 }
                 _ => {
-                    self.key_list.update(list_msg);
+                    self.key_list.update(msg);
                     Ok(UpdateResult::Continue)
                 }
             },
-            Message::SearchBox(search_msg) => {
-                match search_msg.clone() {
-                    search_box::Message::UpdateText(text) => {
-                        self.search_box.update(search_msg);
-                        self.key_list.update_filter(&text);
+            Message::SearchBox(msg) => {
+                let was_focused = self.search_box.is_focused;
+                match self.search_box.update(msg) {
+                    search_box::UpdateResult::TextUpdated(text) => {
+                        self.key_list.update(key_list::Message::UpdateFilter(text));
                     }
-                    _ => {
-                        self.search_box.update(search_msg);
+                    search_box::UpdateResult::None => {}
+                }
+                // Update key_list focus based on search_box focus state
+                if self.view_mode == ViewMode::KeyList {
+                    let should_focus = !self.search_box.is_focused;
+                    if was_focused != self.search_box.is_focused {
+                        self.key_list
+                            .update(key_list::Message::SetFocus(should_focus));
                     }
                 }
                 Ok(UpdateResult::Continue)
             }
-            Message::ToggleDbSelector => {
-                self.db_selector.toggle();
+            Message::DbSelector(msg) => match self.db_selector.update(msg) {
+                db_selector::UpdateResult::Selected(db_index) => {
+                    self.refresh_keys(terminal, db_index).await;
+                    Ok(UpdateResult::Continue)
+                }
+                db_selector::UpdateResult::None => Ok(UpdateResult::Continue),
+            },
+            Message::RequestDeleteConfirmation => {
+                let keys_to_delete = self.key_list.get_selected_keys();
+                if !keys_to_delete.is_empty() {
+                    let count = keys_to_delete.len();
+                    let message = format!(
+                        "Are you sure you want to delete {} key{}?",
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    );
+                    self.confirm_dialog.update(confirm_dialog::Message::Show {
+                        title: "Confirm Delete".to_string(),
+                        message,
+                    });
+                }
                 Ok(UpdateResult::Continue)
             }
-            Message::DbSelector(db_selector_msg) => {
-                match self.db_selector.update(db_selector_msg) {
-                    db_selector::UpdateResult::Selected(db_index) => {
-                        // SwitchDatabase action
-                        self.set_loading_keys(true);
+            Message::ConfirmDialog(msg) => match msg {
+                confirm_dialog::Message::Confirm => {
+                    self.confirm_dialog.update(msg);
+                    let keys_to_delete = self.key_list.get_selected_keys();
+                    if !keys_to_delete.is_empty() {
+                        let db_index = self.db_selector.current_db_index;
 
-                        draw_with_background(terminal, |frame| self.view(frame))?;
+                        self.progress_dialog.update(progress_dialog::Message::Show(
+                            "Deleting Keys".to_string(),
+                            format!("Deleting {} keys...", keys_to_delete.len()),
+                        ));
+                        terminal.draw(|frame| {
+                            self.view(frame);
+                        })?;
 
-                        let pattern = if self.search_box.text.is_empty() {
-                            "*".to_string()
-                        } else {
-                            self.search_box.text.clone()
-                        };
-
-                        match get_redis_service().get_keys(&pattern, db_index).await {
-                            Ok(keys) => {
-                                self.key_list.update_keys(keys);
-                            }
-                            Err(e) => {
-                                self.footer.update(footer::Message::Error(Some(format!(
-                                    "Failed to fetch keys: {}",
-                                    e
-                                ))));
-                                self.set_loading_keys(false);
-                            }
+                        for key in &keys_to_delete {
+                            let _ = get_redis_service().delete_key(key, db_index).await;
                         }
-                        Ok(UpdateResult::Continue)
+
+                        self.key_list.update(key_list::Message::ClearSelection);
+                        self.confirm_dialog.update(confirm_dialog::Message::Cancel);
+
+                        self.refresh_data(db_index).await;
+                        self.progress_dialog.update(progress_dialog::Message::Hide);
                     }
-                    db_selector::UpdateResult::None => Ok(UpdateResult::Continue),
+                    Ok(UpdateResult::Continue)
                 }
-            }
-            Message::DeleteDialog(dialog_msg) => {
-                match dialog_msg {
-                    delete_dialog::Message::Confirm => {
-                        // If dialog is not open, open it first
-                        if !self.delete_dialog.is_open {
-                            let keys_to_delete = self.key_list.get_selected_keys();
-                            if !keys_to_delete.is_empty() {
-                                self.delete_dialog.open(keys_to_delete.len());
-                            }
-                            Ok(UpdateResult::Continue)
-                        } else {
-                            // Dialog is open, handle confirm
-                            self.delete_dialog.update(dialog_msg);
-                            let keys_to_delete = self.key_list.get_selected_keys();
-                            // DeleteKeys action
-                            if !keys_to_delete.is_empty() {
-                                let db_index = self.get_current_db_index();
-
-                                self.progress_dialog.update(progress_dialog::Message::Show(
-                                    "Deleting Keys".to_string(),
-                                    format!("Deleting {} keys...", keys_to_delete.len()),
-                                ));
-
-                                draw_with_background(terminal, |frame| self.view(frame))?;
-
-                                for key in &keys_to_delete {
-                                    let _ = get_redis_service().delete_key(key, db_index).await;
-                                }
-
-                                self.key_list.clear_selection();
-                                self.delete_dialog.close();
-
-                                // Refresh server information and database list
-                                if let Ok((info, db_list)) =
-                                    get_redis_service().get_server_info().await
-                                {
-                                    self.update_server_info(Some(info));
-                                    self.update_db_list(db_list);
-                                }
-
-                                // Refresh list
-                                let pattern = if self.search_box.text.is_empty() {
-                                    "*".to_string()
-                                } else {
-                                    self.search_box.text.clone()
-                                };
-
-                                if let Ok(keys) =
-                                    get_redis_service().get_keys(&pattern, db_index).await
-                                {
-                                    self.key_list.update_keys(keys);
-                                }
-
-                                self.progress_dialog.update(progress_dialog::Message::Hide);
-                            }
-                            Ok(UpdateResult::Continue)
-                        }
-                    }
-                    delete_dialog::Message::Cancel => {
-                        self.delete_dialog.update(dialog_msg);
-                        Ok(UpdateResult::Continue)
-                    }
+                confirm_dialog::Message::Cancel => {
+                    self.confirm_dialog.update(msg);
+                    Ok(UpdateResult::Continue)
                 }
-            }
-            Message::ConnectionSwitcherKey(key) => {
-                if let Some(msg) = self.connection_switcher.handle_key_events(key) {
-                    if let Some(config) = self.connection_switcher.update(msg) {
-                        // SwitchConnection action
-                        self.connection_switcher.is_open = false;
+                _ => Ok(UpdateResult::Continue),
+            },
+            Message::ConnectionSwitcher(msg) => {
+                match self.connection_switcher.update(msg) {
+                    connection_switcher::UpdateResult::Selected(config) => {
+                        self.connection_switcher
+                            .update(connection_switcher::Message::SetOpen(false));
 
                         // Disconnect current connection
                         self.disconnect().await;
@@ -361,18 +323,26 @@ impl DashboardScreen {
                                 config.name.clone(),
                             )));
                         self.header.update(header::Message::SetConnecting(true));
-                        self.set_loading_keys(true);
-                        draw_with_background(terminal, |frame| self.view(frame))?;
+                        self.footer.update(footer::Message::Error(None));
+                        terminal.draw(|frame| {
+                            self.view(frame);
+                        })?;
 
-                        match self.connect_and_load(&config, terminal).await {
+                        match get_redis_service().connect(&config).await {
                             Ok(_) => {
                                 self.header.update(header::Message::SetConnecting(false));
+                                if let Err(e) = self.load_data(terminal).await {
+                                    self.footer.update(footer::Message::Error(Some(format!(
+                                        "Failed to load data: {}",
+                                        e
+                                    ))));
+                                }
                                 Ok(UpdateResult::Continue)
                             }
                             Err(e) => {
+                                self.header
+                                    .update(header::Message::UpdateConnectionName(None));
                                 self.header.update(header::Message::SetConnecting(false));
-                                self.set_loading_keys(false);
-                                // Show error message and stay on dashboard screen
                                 self.footer.update(footer::Message::Error(Some(format!(
                                     "Failed to connect: {}",
                                     e
@@ -380,235 +350,122 @@ impl DashboardScreen {
                                 Ok(UpdateResult::Continue)
                             }
                         }
-                    } else {
-                        Ok(UpdateResult::Continue)
                     }
-                } else {
-                    Ok(UpdateResult::Continue)
+                    connection_switcher::UpdateResult::None => Ok(UpdateResult::Continue),
                 }
             }
-            Message::FileSelector(file_msg) => match file_msg {
-                file_selector::Message::Enter => {
-                    if let Some(path) = self.file_selector.update(file_msg) {
-                        // ImportFromFile action
-                        self.file_selector.close();
+            Message::FileSelector(msg) => match self.file_selector.update(msg) {
+                file_selector::UpdateResult::Selected(path) => {
+                    self.file_selector.update(file_selector::Message::Close);
+                    self.progress_dialog.update(progress_dialog::Message::Show(
+                        "Importing Data".to_string(),
+                        "Reading file...".to_string(),
+                    ));
+                    terminal.draw(|frame| {
+                        self.view(frame);
+                    })?;
 
-                        // Show progress dialog
-                        self.progress_dialog.update(progress_dialog::Message::Show(
-                            "Importing Data".to_string(),
-                            "Reading file...".to_string(),
-                        ));
-
-                        // Draw progress dialog
-                        draw_with_background(terminal, |frame| self.view(frame))?;
-
-                        // Execute import
-                        let db_index = self.get_current_db_index();
-                        match impex::import_redis_data(&path, db_index, false).await {
-                            Ok(result) => {
-                                let mut message =
-                                    format!("Successfully imported {} keys", result.imported_count);
-                                if result.skipped_count > 0 {
-                                    message
-                                        .push_str(&format!(", {} skipped", result.skipped_count));
-                                }
-                                if !result.failed_keys.is_empty() {
-                                    message.push_str(&format!(
-                                        ", {} failed",
-                                        result.failed_keys.len()
-                                    ));
-                                }
-
-                                // Show error details in dialog if there are failed keys
-                                let error_list = if !result.failed_keys.is_empty() {
-                                    Some(
-                                        result
-                                            .failed_keys
-                                            .iter()
-                                            .map(|(k, e)| format!("{}: {}", k, e))
-                                            .collect(),
-                                    )
-                                } else {
-                                    None
-                                };
-                                self.progress_dialog
-                                    .update(progress_dialog::Message::Complete(
-                                        message.clone(),
-                                        error_list,
-                                    ));
-
-                                // Draw completion message
-                                draw_with_background(terminal, |frame| self.view(frame))?;
-
-                                // Refresh server information and database list
-                                if let Ok((info, db_list)) =
-                                    get_redis_service().get_server_info().await
-                                {
-                                    self.update_server_info(Some(info));
-                                    self.update_db_list(db_list);
-                                }
-
-                                // Refresh list
-                                let pattern = if self.search_box.text.is_empty() {
-                                    "*".to_string()
-                                } else {
-                                    self.search_box.text.clone()
-                                };
-
-                                if let Ok(keys) =
-                                    get_redis_service().get_keys(&pattern, db_index).await
-                                {
-                                    self.key_list.update_keys(keys);
-                                }
-
-                                // Wait for a moment to let the user see the completion message
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                self.progress_dialog.update(progress_dialog::Message::Hide);
+                    let db_index = self.db_selector.current_db_index;
+                    match impex::import_redis_data(&path, db_index, false).await {
+                        Ok(result) => {
+                            let mut message =
+                                format!("Successfully imported {} keys", result.imported_count);
+                            if result.skipped_count > 0 {
+                                message.push_str(&format!(", {} skipped", result.skipped_count));
                             }
-                            Err(e) => {
-                                self.progress_dialog.update(progress_dialog::Message::Hide);
-                                self.footer.update(footer::Message::Error(Some(format!(
-                                    "Failed to import: {}",
-                                    e
-                                ))));
+                            if !result.failed_keys.is_empty() {
+                                message.push_str(&format!(", {} failed", result.failed_keys.len()));
                             }
+                            let errors = if !result.failed_keys.is_empty() {
+                                Some(
+                                    result
+                                        .failed_keys
+                                        .iter()
+                                        .map(|(k, e)| format!("{}: {}", k, e))
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            };
+
+                            self.progress_dialog
+                                .update(progress_dialog::Message::Complete(message, errors));
+                            terminal.draw(|frame| {
+                                self.view(frame);
+                            })?;
+
+                            self.refresh_data(db_index).await;
+                            sleep(Duration::from_secs(2)).await;
+                            self.progress_dialog.update(progress_dialog::Message::Hide);
                         }
-                        Ok(UpdateResult::Continue)
-                    } else {
-                        Ok(UpdateResult::Continue)
+                        Err(e) => {
+                            self.progress_dialog.update(progress_dialog::Message::Hide);
+                            self.footer.update(footer::Message::Error(Some(format!(
+                                "Failed to import: {}",
+                                e
+                            ))));
+                        }
                     }
-                }
-                _ => {
-                    self.file_selector.update(file_msg);
                     Ok(UpdateResult::Continue)
                 }
+                file_selector::UpdateResult::None => Ok(UpdateResult::Continue),
             },
-            Message::KeyContentEditor(editor_msg) => {
-                let action = self.key_content_editor.update(editor_msg);
-                match action {
-                    key_content_editor::UpdateResult::Save => {
-                        // SaveKeyContent action
-                        if let Some(key) = self.key_content_editor.get_current_key() {
-                            let value = self.key_content_editor.get_editor_content();
-                            let db_index = self.get_current_db_index();
-
-                            match get_redis_service().set_value(&key, &value, db_index).await {
-                                Ok(_) => {
-                                    self.key_content_editor.content = value;
-                                    self.footer.update(footer::Message::Error(None));
-                                }
-                                Err(e) => {
-                                    self.footer.update(footer::Message::Error(Some(format!(
-                                        "Failed to save: {}",
-                                        e
-                                    ))));
-                                }
-                            }
-                        }
-                        Ok(UpdateResult::Continue)
-                    }
-                    key_content_editor::UpdateResult::SaveAndQuit => {
-                        // SaveAndQuitKeyContent action
-                        if let Some(key) = self.key_content_editor.get_current_key() {
-                            let value = self.key_content_editor.get_editor_content();
-                            let db_index = self.get_current_db_index();
-                            let _ = get_redis_service().set_value(&key, &value, db_index).await;
-                        }
-                        self.view_mode = ViewMode::KeyList;
-                        Ok(UpdateResult::Continue)
-                    }
-                    key_content_editor::UpdateResult::Quit => {
-                        self.view_mode = ViewMode::KeyList;
-                        Ok(UpdateResult::Continue)
-                    }
-                    _ => Ok(UpdateResult::Continue),
+            Message::KeyContentEditor(msg) => match self.key_content_editor.update(msg) {
+                key_content_editor::UpdateResult::Save => {
+                    self.save_key_content().await;
+                    Ok(UpdateResult::Continue)
                 }
-            }
-            Message::CommandMode(cmd_msg) => {
-                let db_index = self.get_current_db_index();
-                self.command_mode
-                    .update(cmd_msg, db_index, |error| {
-                        self.footer.update(footer::Message::Error(error));
-                    })
-                    .await?;
-                Ok(UpdateResult::Continue)
-            }
+                key_content_editor::UpdateResult::SaveAndQuit => {
+                    self.save_key_content().await;
+                    self.view_mode = ViewMode::KeyList;
+                    self.key_list
+                        .update(key_list::Message::SetFocus(!self.search_box.is_focused));
+                    Ok(UpdateResult::Continue)
+                }
+                key_content_editor::UpdateResult::Quit => {
+                    self.view_mode = ViewMode::KeyList;
+                    self.key_list
+                        .update(key_list::Message::SetFocus(!self.search_box.is_focused));
+                    Ok(UpdateResult::Continue)
+                }
+                _ => Ok(UpdateResult::Continue),
+            },
+            Message::CommandMode(msg) => match self.command_mode.update(msg).await? {
+                command_mode::UpdateResult::EnterCommandMode => {
+                    self.view_mode = ViewMode::CommandMode;
+                    self.key_list.update(key_list::Message::SetFocus(false));
+                    Ok(UpdateResult::Continue)
+                }
+                command_mode::UpdateResult::ExitCommandMode => {
+                    self.view_mode = ViewMode::KeyList;
+                    self.key_list
+                        .update(key_list::Message::SetFocus(!self.search_box.is_focused));
+                    Ok(UpdateResult::Continue)
+                }
+                command_mode::UpdateResult::Continue => Ok(UpdateResult::Continue),
+            },
             Message::Disconnect => {
-                // SwitchScreen action
                 self.disconnect().await;
                 Ok(UpdateResult::SwitchScreen(Screen::Connection))
             }
-            Message::OpenConnectionSwitcher => {
-                let connections = connection_storage::load_connections();
-                self.connection_switcher
-                    .open(connections, self.header.connection_name.as_ref().cloned());
-                Ok(UpdateResult::Continue)
-            }
             Message::RefreshKeys => {
-                // RefreshKeys action
-                self.set_loading_keys(true);
-
-                draw_with_background(terminal, |frame| self.view(frame))?;
-
-                let pattern = if self.search_box.text.is_empty() {
-                    "*".to_string()
-                } else {
-                    self.search_box.text.clone()
-                };
-
-                let db_index = self.get_current_db_index();
-                match get_redis_service().get_keys(&pattern, db_index).await {
-                    Ok(keys) => {
-                        self.key_list.update_keys(keys);
-                    }
-                    Err(e) => {
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to fetch keys: {}",
-                            e
-                        ))));
-                        self.set_loading_keys(false);
-                    }
-                }
+                let db_index = self.db_selector.current_db_index;
+                self.refresh_keys(terminal, db_index).await;
                 Ok(UpdateResult::Continue)
             }
             Message::RefreshServerInfo => {
-                // RefreshServerInfo action
-                self.set_loading_server_info(true);
+                self.header
+                    .update(header::Message::SetLoadingServerInfo(true));
+                terminal.draw(|frame| {
+                    self.view(frame);
+                })?;
 
-                draw_with_background(terminal, |frame| self.view(frame))?;
+                self.load_server_info().await;
 
-                match get_redis_service().get_server_info().await {
-                    Ok((info, db_list)) => {
-                        self.update_server_info(Some(info));
-                        self.update_db_list(db_list);
-                    }
-                    Err(e) => {
-                        self.footer.update(footer::Message::Error(Some(format!(
-                            "Failed to fetch server info: {}",
-                            e
-                        ))));
-                    }
-                }
-
-                self.set_loading_server_info(false);
                 Ok(UpdateResult::Continue)
             }
             Message::ExportData => {
-                // ExportData action
                 self.export_data(terminal).await?;
-                Ok(UpdateResult::Continue)
-            }
-            Message::EnterCommandMode => {
-                self.view_mode = ViewMode::CommandMode;
-                self.command_mode.reset();
-                Ok(UpdateResult::Continue)
-            }
-            Message::ExitKeyContent => {
-                self.view_mode = ViewMode::KeyList;
-                Ok(UpdateResult::Continue)
-            }
-            Message::ExitCommandMode => {
-                self.view_mode = ViewMode::KeyList;
                 Ok(UpdateResult::Continue)
             }
         }
@@ -617,7 +474,6 @@ impl DashboardScreen {
     pub fn view(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        // Set background color for the entire frame
         render_background(frame, area);
 
         self.footer
@@ -633,14 +489,12 @@ impl DashboardScreen {
             .split(area);
 
         self.header.view(frame, chunks[0]);
-        self.footer.view(frame, chunks[2]);
-
         match self.view_mode {
             ViewMode::KeyList => self.render_key_list_view(frame, chunks[1]),
             ViewMode::KeyContent => self.render_key_content_view(frame, chunks[1]),
             ViewMode::CommandMode => self.render_command_mode_view(frame, chunks[1]),
         }
-
+        self.footer.view(frame, chunks[2]);
         self.render_dialogs(frame, area);
     }
 
@@ -654,7 +508,25 @@ impl DashboardScreen {
             .split(area);
 
         self.render_sidebar(frame, main_chunks[0]);
-        self.render_content_area(frame, main_chunks[1]);
+
+        // Content area
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(get_colors().border_default))
+            .title(Span::styled(
+                "View",
+                Style::default()
+                    .fg(get_colors().text_primary)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+        let paragraph =
+            Paragraph::new("Select a key to view its value or press '>' to execute a command")
+                .block(block)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(get_colors().text_secondary));
+        frame.render_widget(paragraph, main_chunks[1]);
     }
 
     fn render_key_content_view(&mut self, frame: &mut Frame, area: Rect) {
@@ -677,11 +549,31 @@ impl DashboardScreen {
         self.command_mode.view(frame, main_chunks[1]);
     }
 
+    fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Search box
+                Constraint::Min(1),    // Key list
+                Constraint::Length(3), // DB selector
+            ])
+            .split(area);
+
+        let cursor_pos = self.search_box.view(frame, chunks[0]);
+
+        self.key_list.view(frame, chunks[1]);
+        self.db_selector.view(frame, chunks[2]);
+
+        if let Some((x, y)) = cursor_pos {
+            frame.set_cursor_position(ratatui::layout::Position { x, y });
+        }
+    }
+
     fn render_dialogs(&mut self, frame: &mut Frame, area: Rect) {
-        if self.delete_dialog.is_open {
+        if self.confirm_dialog.is_open {
             let popup_area = centered_rect_fixed_size(70, 8, area);
             frame.render_widget(Clear, popup_area);
-            self.delete_dialog.view(frame, popup_area);
+            self.confirm_dialog.view(frame, popup_area);
         }
 
         if self.progress_dialog.is_visible {
@@ -706,141 +598,126 @@ impl DashboardScreen {
         }
     }
 
-    fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Search box
-                Constraint::Min(1),    // Key list
-                Constraint::Length(3), // DB selector
-            ])
-            .split(area);
-
-        let cursor_pos = self.search_box.view(frame, chunks[0]);
-
-        // Only focus on key list in KeyList view mode
-        let key_list_focused = self.view_mode == ViewMode::KeyList && !self.search_box.is_focused;
-        self.key_list.view(frame, chunks[1], key_list_focused);
-        self.db_selector.view(frame, chunks[2]);
-
-        if let Some((x, y)) = cursor_pos {
-            frame.set_cursor_position(ratatui::layout::Position { x, y });
+    fn get_search_pattern(&self) -> String {
+        if self.search_box.text.is_empty() {
+            "*".to_string()
+        } else {
+            self.search_box.text.clone()
         }
     }
 
-    fn render_content_area(&self, frame: &mut Frame, area: Rect) {
-        use ratatui::style::{Modifier, Style};
-        use ratatui::text::Span;
-        use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(get_colors().border_default))
-            .title(Span::styled(
-                "View",
-                Style::default()
-                    .fg(get_colors().text_primary)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let paragraph =
-            Paragraph::new("Select a key to view its value or press '>' to execute a command")
-                .block(block)
-                .wrap(Wrap { trim: true })
-                .style(Style::default().fg(get_colors().text_secondary));
-        frame.render_widget(paragraph, area);
-    }
-
-    fn update_server_info(&mut self, info: Option<ServerInfo>) {
-        self.header.update(header::Message::UpdateServerInfo(info));
-    }
-
-    fn update_db_list(&mut self, db_list: Vec<DbInfo>) {
-        self.db_selector.update_db_list(db_list);
-    }
-
-    fn set_loading_keys(&mut self, loading: bool) {
-        self.key_list.is_loading = loading;
-    }
-
-    fn set_loading_server_info(&mut self, loading: bool) {
-        self.header
-            .update(header::Message::SetLoadingServerInfo(loading));
-    }
-
-    async fn connect_and_load(
-        &mut self,
-        config: &crate::models::ConnectionConfig,
-        terminal: &mut ratatui::DefaultTerminal,
-    ) -> Result<()> {
-        get_redis_service().connect(config).await?;
-        self.load_data(config, terminal).await
-    }
-
-    pub async fn load_data(
-        &mut self,
-        config: &crate::models::ConnectionConfig,
-        terminal: &mut ratatui::DefaultTerminal,
-    ) -> Result<()> {
-        self.header
-            .update(header::Message::UpdateConnectionName(Some(
-                config.name.clone(),
-            )));
-        self.footer.update(footer::Message::Error(None));
-
-        // Set loading state
-        self.set_loading_server_info(true);
-        self.set_loading_keys(true);
-
-        // Draw loading state with proper background
-        draw_with_background(terminal, |frame| self.view(frame))?;
-
-        // Load server information and database list
+    async fn load_server_info(&mut self) {
         if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
-            self.update_server_info(Some(info));
-            self.update_db_list(db_list);
+            self.header
+                .update(header::Message::UpdateServerInfo(Some(info)));
+            self.db_selector
+                .update(db_selector::Message::UpdateDbList(db_list));
         }
+    }
 
-        // Load keys
-        let db_index = self.get_current_db_index();
-        if let Ok(keys) = get_redis_service().get_keys("*", db_index).await {
-            self.key_list.update_keys(keys);
+    async fn load_keys(&mut self, pattern: &str, db_index: u32) -> Result<(), String> {
+        get_redis_service()
+            .get_keys(pattern, db_index)
+            .await
+            .map(|keys| {
+                self.key_list.update(key_list::Message::UpdateKeys(keys));
+            })
+            .map_err(|e| format!("Failed to fetch keys: {}", e))
+    }
+
+    pub async fn load_data(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        self.header
+            .update(header::Message::SetLoadingServerInfo(true));
+        self.key_list.update(key_list::Message::SetLoading(true));
+        terminal.draw(|frame| {
+            self.view(frame);
+        })?;
+
+        self.load_server_info().await;
+
+        let db_index = self.db_selector.current_db_index;
+        self.load_keys("*", db_index).await.ok();
+
+        // Set focus state after loading data
+        if self.view_mode == ViewMode::KeyList {
+            self.key_list
+                .update(key_list::Message::SetFocus(!self.search_box.is_focused));
         }
 
         Ok(())
+    }
+
+    async fn refresh_keys(&mut self, terminal: &mut DefaultTerminal, db_index: u32) {
+        self.key_list.update(key_list::Message::SetLoading(true));
+        terminal
+            .draw(|frame| {
+                self.view(frame);
+            })
+            .ok();
+
+        let pattern = self.get_search_pattern();
+        if let Err(e) = self.load_keys(&pattern, db_index).await {
+            self.footer.update(footer::Message::Error(Some(e)));
+            self.key_list.update(key_list::Message::SetLoading(false));
+        }
+    }
+
+    async fn refresh_data(&mut self, db_index: u32) {
+        self.load_server_info().await;
+
+        let pattern = self.get_search_pattern();
+        self.load_keys(&pattern, db_index).await.ok();
     }
 
     pub async fn disconnect(&mut self) {
         get_redis_service().disconnect().await;
 
         // Reset state
-        self.view_mode = ViewMode::KeyList;
-        self.key_list.update_keys(vec![]);
         self.header.update(header::Message::UpdateServerInfo(None));
         self.header
             .update(header::Message::UpdateConnectionName(None));
+        self.view_mode = ViewMode::KeyList;
+        self.search_box
+            .update(search_box::Message::UpdateText(String::new()));
+        self.key_list
+            .update(key_list::Message::UpdateFilter(String::new()));
+        self.key_list.update(key_list::Message::UpdateKeys(vec![]));
+        self.key_list.update(key_list::Message::SetFocus(false));
     }
 
-    pub fn get_current_db_index(&self) -> u32 {
-        self.db_selector.current_db_index
-    }
+    async fn save_key_content(&mut self) {
+        if let Some(key) = self.key_content_editor.current_key.clone() {
+            let value = String::from(self.key_content_editor.editor_state.lines.clone());
+            let db_index = self.db_selector.current_db_index;
 
-    async fn export_data(&mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
-        // Check if there is a connection
-        if self.header.connection_name.is_none() {
-            self.footer.update(footer::Message::Error(Some(
-                "No Redis connection active".to_string(),
-            )));
-            return Ok(());
+            match get_redis_service().set_value(&key, &value, db_index).await {
+                Ok(_) => {
+                    self.footer.update(footer::Message::Error(None));
+                }
+                Err(e) => {
+                    self.footer.update(footer::Message::Error(Some(format!(
+                        "Failed to save: {}",
+                        e
+                    ))));
+                }
+            }
         }
+    }
 
-        // Get keys to export
-        let keys = if self.key_list.selected_keys.is_empty() {
-            // If no keys are selected, export all keys
+    pub async fn export_data(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        let connection_name = match &self.header.connection_name {
+            Some(name) => name.clone(),
+            None => {
+                self.footer.update(footer::Message::Error(Some(
+                    "No Redis connection active".to_string(),
+                )));
+                return Ok(());
+            }
+        };
+
+        let keys: Vec<String> = if self.key_list.selected_keys.is_empty() {
             self.key_list.keys.clone()
         } else {
-            // Export selected keys
             self.key_list.selected_keys.iter().cloned().collect()
         };
 
@@ -851,29 +728,17 @@ impl DashboardScreen {
             return Ok(());
         }
 
-        let connection_name = self.header.connection_name.clone().unwrap_or_default();
-        let database = self.get_current_db_index();
-        self.export_keys(terminal, connection_name, database, keys)
-            .await
-    }
+        let database = self.db_selector.current_db_index;
 
-    async fn export_keys(
-        &mut self,
-        terminal: &mut ratatui::DefaultTerminal,
-        connection_name: String,
-        database: u32,
-        keys: Vec<String>,
-    ) -> Result<()> {
         // Show progress dialog
         self.progress_dialog.update(progress_dialog::Message::Show(
             "Export Data".to_string(),
             format!("Exporting {} keys...", keys.len()),
         ));
+        terminal.draw(|frame| {
+            self.view(frame);
+        })?;
 
-        // Draw progress dialog
-        draw_with_background(terminal, |frame| self.view(frame))?;
-
-        // Generate file name
         let file_name = format!(
             "redis_data_{}_{}_db{}_{}.json",
             connection_name.replace(' ', "_"),
@@ -881,10 +746,8 @@ impl DashboardScreen {
             database,
             keys.len()
         );
-
         let file_path = super::impex::get_export_path(&file_name);
 
-        // Execute export
         match super::impex::export_redis_data(connection_name, database, &keys, &file_path).await {
             Ok(result) => {
                 let location = if file_path.starts_with(dirs::desktop_dir().unwrap_or_default()) {
@@ -899,29 +762,21 @@ impl DashboardScreen {
                     message.push_str(&format!(", {} failed", result.failed_keys.len()));
                 }
 
-                // Show error details in dialog if there are failed keys
-                let error_list = if !result.failed_keys.is_empty() {
-                    Some(
-                        result
-                            .failed_keys
-                            .iter()
-                            .map(|(k, e)| format!("{}: {}", k, e))
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
+                let error_list = (!result.failed_keys.is_empty()).then(|| {
+                    result
+                        .failed_keys
+                        .iter()
+                        .map(|(k, e)| format!("{}: {}", k, e))
+                        .collect::<Vec<_>>()
+                });
+
                 self.progress_dialog
-                    .update(progress_dialog::Message::Complete(
-                        message.clone(),
-                        error_list,
-                    ));
+                    .update(progress_dialog::Message::Complete(message, error_list));
+                terminal.draw(|frame| {
+                    self.view(frame);
+                })?;
 
-                // Draw completion message
-                draw_with_background(terminal, |frame| self.view(frame))?;
-
-                // Wait for a moment to let the user see the completion message
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                sleep(Duration::from_secs(2)).await;
                 self.progress_dialog.update(progress_dialog::Message::Hide);
             }
             Err(e) => {

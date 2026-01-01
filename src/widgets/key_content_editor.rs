@@ -18,6 +18,9 @@ pub enum Message {
     VimCommandModeToggle,
     VimCommandModeUpdateInput(String),
     VimCommandModeExecute,
+    Exit,
+    SetLoadingValue(bool),
+    LoadKeyValue(String, String),
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +35,6 @@ pub struct KeyContentEditor {
     pub editor_state: EditorState,
     pub editor_handler: EditorEventHandler,
     pub current_key: Option<String>,
-    pub content: String,
     pub is_json: bool,
     pub is_vim_command_mode: bool,
     pub vim_command_input: String,
@@ -45,7 +47,6 @@ impl KeyContentEditor {
             editor_state: EditorState::default(),
             editor_handler: EditorEventHandler::default(),
             current_key: None,
-            content: String::new(),
             is_json: false,
             is_vim_command_mode: false,
             vim_command_input: String::new(),
@@ -55,7 +56,20 @@ impl KeyContentEditor {
 
     pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
         if self.is_vim_command_mode {
-            return self.handle_vim_command_key(key);
+            return match key.code {
+                KeyCode::Enter => Some(Message::VimCommandModeExecute),
+                KeyCode::Esc => Some(Message::VimCommandModeToggle),
+                KeyCode::Char(c) => Some(Message::VimCommandModeUpdateInput(format!(
+                    "{}{}",
+                    self.vim_command_input, c
+                ))),
+                KeyCode::Backspace => {
+                    let mut text = self.vim_command_input.clone();
+                    text.pop();
+                    Some(Message::VimCommandModeUpdateInput(text))
+                }
+                _ => None,
+            };
         }
 
         // Handle ':' key for vim command mode - only in Normal mode
@@ -78,8 +92,8 @@ impl KeyContentEditor {
                     return Some(Message::EditorKeyEvent(key));
                 }
                 EditorMode::Normal => {
-                    // Normal mode, Esc exits editor (handled by parent).
-                    return None;
+                    // Normal mode, Esc exits editor.
+                    return Some(Message::Exit);
                 }
             }
         }
@@ -87,25 +101,29 @@ impl KeyContentEditor {
         Some(Message::EditorKeyEvent(key))
     }
 
-    fn handle_vim_command_key(&self, key: KeyEvent) -> Option<Message> {
-        match key.code {
-            KeyCode::Enter => Some(Message::VimCommandModeExecute),
-            KeyCode::Esc => Some(Message::VimCommandModeToggle),
-            KeyCode::Char(c) => Some(Message::VimCommandModeUpdateInput(format!(
-                "{}{}",
-                self.vim_command_input, c
-            ))),
-            KeyCode::Backspace => {
-                let mut text = self.vim_command_input.clone();
-                text.pop();
-                Some(Message::VimCommandModeUpdateInput(text))
-            }
-            _ => None,
-        }
-    }
-
     pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
+            Message::SetLoadingValue(loading) => {
+                self.is_loading_value = loading;
+                UpdateResult::None
+            }
+            Message::LoadKeyValue(key, value) => {
+                self.current_key = Some(key);
+                let looks_like_json = value.trim_start().starts_with(['{', '[', '"']);
+                let (content, is_json) = if looks_like_json {
+                    serde_json::from_str::<serde_json::Value>(&value)
+                        .ok()
+                        .and_then(|json| serde_json::to_string_pretty(&json).ok())
+                        .map(|pretty| (pretty, true))
+                        .unwrap_or_else(|| (value, false))
+                } else {
+                    (value, false)
+                };
+                self.is_json = is_json;
+                self.editor_state = EditorState::new(Lines::from(content.as_str()));
+                self.is_loading_value = false;
+                UpdateResult::None
+            }
             Message::EditorKeyEvent(key) => {
                 self.editor_handler
                     .on_key_event(key, &mut self.editor_state);
@@ -127,7 +145,7 @@ impl KeyContentEditor {
                 let result = match cmd {
                     "w" => UpdateResult::Save,
                     "q" => UpdateResult::Quit,
-                    "wq" | "x" => UpdateResult::SaveAndQuit,
+                    "wq" => UpdateResult::SaveAndQuit,
                     "q!" => UpdateResult::Quit,
                     _ => UpdateResult::None,
                 };
@@ -137,6 +155,7 @@ impl KeyContentEditor {
 
                 result
             }
+            Message::Exit => UpdateResult::Quit,
         }
     }
 
@@ -150,7 +169,7 @@ impl KeyContentEditor {
                     .fg(colors.text_primary)
                     .add_modifier(Modifier::BOLD),
             )])
-        } else if !self.content.is_empty() {
+        } else if !self.editor_state.lines.is_empty() {
             let (mode_name, mode_color) = match self.editor_state.mode {
                 EditorMode::Normal => ("NORMAL", colors.success),
                 EditorMode::Insert => ("INSERT", colors.info),
@@ -191,7 +210,7 @@ impl KeyContentEditor {
                 .block(block)
                 .alignment(ratatui::layout::Alignment::Center);
             frame.render_widget(paragraph, area);
-        } else if !self.content.is_empty() {
+        } else if !self.editor_state.lines.is_empty() {
             let (render_area, cmd_area) = if self.is_vim_command_mode {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -255,37 +274,5 @@ impl KeyContentEditor {
                 .style(Style::default().fg(colors.text_secondary));
             frame.render_widget(paragraph, area);
         }
-    }
-
-    pub fn load_key_value(&mut self, key: String, value: String) {
-        self.current_key = Some(key);
-
-        let looks_like_json = value.trim_start().starts_with(['{', '[', '"']);
-        let (content, is_json) = if looks_like_json {
-            serde_json::from_str::<serde_json::Value>(&value)
-                .ok()
-                .and_then(|json| serde_json::to_string_pretty(&json).ok())
-                .map(|pretty| (pretty, true))
-                .unwrap_or_else(|| (value, false))
-        } else {
-            (value, false)
-        };
-
-        self.content = content.clone();
-        self.is_json = is_json;
-        self.editor_state = EditorState::new(Lines::from(content.as_str()));
-        self.is_loading_value = false;
-    }
-
-    pub fn get_editor_content(&self) -> String {
-        String::from(self.editor_state.lines.clone())
-    }
-
-    pub fn set_loading_value(&mut self, loading: bool) {
-        self.is_loading_value = loading;
-    }
-
-    pub fn get_current_key(&self) -> Option<String> {
-        self.current_key.clone()
     }
 }

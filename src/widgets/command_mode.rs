@@ -14,16 +14,31 @@ use crate::theme::get_colors;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Enter(u32),
     UpdateInput(String),
     Execute,
     ToggleFocus,
     EditorKeyEvent(KeyEvent),
+    Exit,
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    Continue,
+    EnterCommandMode,
+    ExitCommandMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Focus {
+    Input,
+    Output,
 }
 
 pub struct CommandMode {
+    pub db_index: u32,
+    focus: Focus,
     pub command_input: String,
-    pub command_output: String,
-    pub focus_on_output: bool,
     pub editor_state: EditorState,
     pub editor_handler: EditorEventHandler,
 }
@@ -31,37 +46,40 @@ pub struct CommandMode {
 impl CommandMode {
     pub fn new() -> Self {
         Self {
+            db_index: 0,
+            focus: Focus::Input,
             command_input: String::new(),
-            command_output: String::new(),
-            focus_on_output: false,
             editor_state: EditorState::default(),
             editor_handler: EditorEventHandler::default(),
         }
     }
 
     pub fn handle_key_events(&self, key: KeyEvent) -> Option<Message> {
-        // Tab key handling is the same for both modes
         if key.code == KeyCode::Tab {
-            return if !self.command_output.is_empty() {
+            return if !self.editor_state.lines.is_empty() {
                 Some(Message::ToggleFocus)
             } else {
                 None
             };
         }
 
-        if self.focus_on_output {
-            match key.code {
-                KeyCode::Esc => {
-                    // If you press Esc in Normal mode, it returns None, allowing the external process to exit.
-                    if self.editor_state.mode == EditorMode::Normal {
-                        None
-                    } else {
-                        // In other modes, the data is passed to the editor for processing.
-                        Some(Message::EditorKeyEvent(key))
-                    }
+        if key.code == KeyCode::Esc {
+            if self.focus == Focus::Output {
+                // If in output area and not in Normal mode, pass to editor first
+                if self.editor_state.mode != EditorMode::Normal {
+                    return Some(Message::EditorKeyEvent(key));
+                } else {
+                    // Normal mode, Esc exits command mode
+                    return Some(Message::Exit);
                 }
-                _ => Some(Message::EditorKeyEvent(key)),
+            } else {
+                // Not in output area, Esc exits command mode
+                return Some(Message::Exit);
             }
+        }
+
+        if self.focus == Focus::Output {
+            Some(Message::EditorKeyEvent(key))
         } else {
             match key.code {
                 KeyCode::Enter => Some(Message::Execute),
@@ -78,92 +96,53 @@ impl CommandMode {
         }
     }
 
-    pub async fn update(
-        &mut self,
-        msg: Message,
-        db_index: u32,
-        mut update_footer_error: impl FnMut(Option<String>),
-    ) -> Result<()> {
+    pub async fn update(&mut self, msg: Message) -> Result<UpdateResult> {
         match msg {
+            Message::Enter(db_index) => {
+                self.db_index = db_index;
+                self.reset();
+                Ok(UpdateResult::EnterCommandMode)
+            }
             Message::UpdateInput(input) => {
                 self.command_input = input;
-                Ok(())
+                Ok(UpdateResult::Continue)
             }
             Message::Execute => {
                 let command = self.command_input.clone();
                 if !command.trim().is_empty() {
                     let parts: Vec<&str> = command.split_whitespace().collect();
                     if parts.is_empty() {
-                        return Ok(());
+                        return Ok(UpdateResult::Continue);
                     }
 
-                    let mut output =
-                        match get_redis_service().execute_command(&parts, db_index).await {
-                            Ok(output) => {
-                                update_footer_error(None);
-                                output
-                            }
-                            Err(e) => {
-                                let error_str = e.to_string();
-                                if error_str.contains("broken pipe")
-                                    || error_str.contains("Connection refused")
-                                    || error_str.contains("Connection reset")
-                                {
-                                    update_footer_error(Some(
-                                        "Connection lost, please reconnect".to_string(),
-                                    ));
-                                }
-                                format!("(error) {}", error_str)
-                            }
-                        };
-
-                    // Limit output size
-                    const MAX_OUTPUT_SIZE: usize = 500 * 1024;
-                    if output.len() > MAX_OUTPUT_SIZE {
-                        let original_len = output.len();
-                        output.truncate(MAX_OUTPUT_SIZE);
-                        output.push_str(&format!(
-                            "\n\n[Output truncated - too large ({} bytes). Use smaller queries or pagination.]",
-                            original_len
-                        ));
-                    }
-
-                    // Check if it is JSON and format it
-                    let trimmed = output.trim();
-                    let (formatted_output, is_json) = if (trimmed.starts_with('{')
-                        && trimmed.ends_with('}'))
-                        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+                    let output = match get_redis_service()
+                        .execute_command(&parts, self.db_index)
+                        .await
                     {
-                        match serde_json::from_str::<serde_json::Value>(trimmed) {
-                            Ok(json_value) => {
-                                if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
-                                    (formatted, true)
-                                } else {
-                                    (output, false)
-                                }
-                            }
-                            Err(_) => (output, false),
-                        }
-                    } else {
-                        (output, false)
+                        Ok(output) => output,
+                        Err(e) => format!("(error) {}", e),
                     };
 
-                    self.set_command_output(formatted_output, is_json);
-                    self.clear_command_input();
+                    self.editor_state = EditorState::new(Lines::from(output.as_str()));
+                    self.command_input.clear();
                 }
-                Ok(())
+                Ok(UpdateResult::Continue)
             }
             Message::ToggleFocus => {
-                if !self.command_output.is_empty() {
-                    self.focus_on_output = !self.focus_on_output;
+                if !self.editor_state.lines.is_empty() {
+                    self.focus = match self.focus {
+                        Focus::Input => Focus::Output,
+                        Focus::Output => Focus::Input,
+                    };
                 }
-                Ok(())
+                Ok(UpdateResult::Continue)
             }
             Message::EditorKeyEvent(key) => {
                 self.editor_handler
                     .on_key_event(key, &mut self.editor_state);
-                Ok(())
+                Ok(UpdateResult::Continue)
             }
+            Message::Exit => Ok(UpdateResult::ExitCommandMode),
         }
     }
 
@@ -183,16 +162,14 @@ impl CommandMode {
     fn render_command_input(&self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
 
-        let title = if self.focus_on_output {
-            "Command Input (Tab: Switch to Input | Esc: Exit)"
-        } else {
-            "Command Input (Enter: Execute | Tab: Browse Output | Esc: Exit)"
+        let title = match self.focus {
+            Focus::Output => "Command Input (Tab: Switch to Input | Esc: Exit)",
+            Focus::Input => "Command Input (Enter: Execute | Tab: Browse Output | Esc: Exit)",
         };
 
-        let border_color = if self.focus_on_output {
-            colors.border_default
-        } else {
-            colors.border_active
+        let border_color = match self.focus {
+            Focus::Output => colors.border_default,
+            Focus::Input => colors.border_active,
         };
 
         let input_content = format!("> {}", self.command_input);
@@ -214,7 +191,7 @@ impl CommandMode {
 
         frame.render_widget(input_widget, area);
 
-        if !self.focus_on_output {
+        if self.focus == Focus::Input {
             use unicode_width::UnicodeWidthStr;
             let cursor_x = area.x + 3 + self.command_input.width() as u16;
             let cursor_y = area.y + 1;
@@ -231,29 +208,29 @@ impl CommandMode {
     fn render_command_output(&mut self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
 
-        let title = if self.command_output.is_empty() {
+        let title = if self.editor_state.lines.is_empty() {
             "Command Output"
-        } else if self.focus_on_output {
-            match self.editor_state.mode {
-                EditorMode::Visual => {
+        } else {
+            match (self.focus, self.editor_state.mode) {
+                (Focus::Output, EditorMode::Visual) => {
                     "Command Output (Visual Mode - Esc to exit Visual, then Esc to exit Command Mode)"
                 }
-                EditorMode::Insert => {
+                (Focus::Output, EditorMode::Insert) => {
                     "Command Output (Insert Mode - Esc to exit Insert, then Esc to exit Command Mode)"
                 }
-                EditorMode::Normal => {
+                (Focus::Output, EditorMode::Normal) => {
                     "Command Output (Browsing - hjkl/arrows to navigate, Tab to return)"
                 }
-                EditorMode::Search => "Command Output (Search Mode - Esc to exit Search)",
+                (Focus::Output, EditorMode::Search) => {
+                    "Command Output (Search Mode - Esc to exit Search)"
+                }
+                (Focus::Input, _) => "Command Output (Tab to browse)",
             }
-        } else {
-            "Command Output (Tab to browse)"
         };
 
-        let border_color = if self.focus_on_output {
-            colors.border_active
-        } else {
-            colors.border_default
+        let border_color = match self.focus {
+            Focus::Output => colors.border_active,
+            Focus::Input => colors.border_default,
         };
 
         let block = Block::default()
@@ -267,7 +244,7 @@ impl CommandMode {
                     .add_modifier(Modifier::BOLD),
             ));
 
-        if self.command_output.is_empty() {
+        if self.editor_state.lines.is_empty() {
             let paragraph = Paragraph::new("No command executed yet")
                 .block(block)
                 .style(Style::default().fg(colors.text_secondary));
@@ -289,19 +266,9 @@ impl CommandMode {
         }
     }
 
-    pub fn set_command_output(&mut self, output: String, _is_json: bool) {
-        self.command_output = output.clone();
-        self.editor_state = EditorState::new(Lines::from(output.as_str()));
-    }
-
-    pub fn clear_command_input(&mut self) {
+    fn reset(&mut self) {
         self.command_input.clear();
-    }
-
-    pub fn reset(&mut self) {
-        self.command_input.clear();
-        self.command_output.clear();
-        self.focus_on_output = false;
         self.editor_state = EditorState::default();
+        self.focus = Focus::Input;
     }
 }

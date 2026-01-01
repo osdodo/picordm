@@ -1,10 +1,10 @@
 pub mod command_mode;
+pub mod confirm_dialog;
 pub mod connection_form;
 pub mod connection_list;
 pub mod connection_storage;
 pub mod connection_switcher;
 pub mod db_selector;
-pub mod delete_dialog;
 pub mod file_selector;
 pub mod footer;
 pub mod format;

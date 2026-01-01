@@ -50,7 +50,7 @@
 | `ciw`               | Change word                 |
 | `:w`                | Save to Redis (Vim-style)   |
 | `:q`                | Return to Dashboard         |
-| `:wq` / `:x`        | Save and return             |
+| `:wq`               | Save and return             |
 | `:q!`               | Force quit without saving   |
 
 ### Insert Mode

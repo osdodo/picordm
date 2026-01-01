@@ -16,6 +16,12 @@ pub enum Message {
     ToggleFocus,
 }
 
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    None,
+    TextUpdated(String),
+}
+
 pub struct SearchBox {
     pub text: String,
     pub is_focused: bool,
@@ -31,13 +37,15 @@ impl SearchBox {
         }
     }
 
-    pub fn update(&mut self, msg: Message) {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::UpdateText(text) => {
-                self.text = text;
+                self.text = text.clone();
+                UpdateResult::TextUpdated(text)
             }
             Message::ToggleFocus => {
                 self.is_focused = !self.is_focused;
+                UpdateResult::None
             }
         }
     }

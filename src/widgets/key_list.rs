@@ -18,14 +18,26 @@ pub enum Message {
     Select,
     ToggleSelection,
     SelectAll,
+    ClearSelection,
+    UpdateFilter(String),
+    SetLoading(bool),
+    UpdateKeys(Vec<String>),
+    SetFocus(bool),
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateResult {
+    None,
+    Selected(String),
 }
 
 pub struct KeyList {
-    pub keys: Vec<String>,
     pub state: ListState,
+    pub keys: Vec<String>,
     pub selected_keys: HashSet<String>,
-    pub filter: String,
+    pub filter_pattern: String,
     pub is_loading: bool,
+    pub is_focused: bool,
 }
 
 impl KeyList {
@@ -33,11 +45,12 @@ impl KeyList {
         let mut state = ListState::default();
         state.select(Some(0));
         Self {
-            keys: Vec::new(),
             state,
+            keys: Vec::new(),
             selected_keys: HashSet::new(),
-            filter: String::new(),
+            filter_pattern: String::new(),
             is_loading: false,
+            is_focused: false,
         }
     }
 
@@ -52,32 +65,65 @@ impl KeyList {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Option<String> {
+    pub fn update(&mut self, msg: Message) -> UpdateResult {
         match msg {
             Message::Next => {
                 self.next();
-                None
+                UpdateResult::None
             }
             Message::Previous => {
                 self.previous();
-                None
+                UpdateResult::None
             }
-            Message::Select => self.selected_key().cloned(),
+            Message::Select => {
+                if let Some(key) = self.selected_key().cloned() {
+                    UpdateResult::Selected(key)
+                } else {
+                    UpdateResult::None
+                }
+            }
             Message::ToggleSelection => {
                 self.toggle_selection();
-                None
+                UpdateResult::None
             }
             Message::SelectAll => {
                 self.select_all();
-                None
+                UpdateResult::None
+            }
+            Message::ClearSelection => {
+                self.selected_keys.clear();
+                UpdateResult::None
+            }
+            Message::UpdateFilter(pattern) => {
+                self.filter_pattern = pattern;
+                UpdateResult::None
+            }
+            Message::SetLoading(loading) => {
+                self.is_loading = loading;
+                UpdateResult::None
+            }
+            Message::UpdateKeys(keys) => {
+                self.keys = keys;
+                self.selected_keys.clear();
+                self.is_loading = false;
+                if !self.get_filtered_keys().is_empty() {
+                    self.state.select(Some(0));
+                } else {
+                    self.state.select(None);
+                }
+                UpdateResult::None
+            }
+            Message::SetFocus(focused) => {
+                self.is_focused = focused;
+                UpdateResult::None
             }
         }
     }
 
-    pub fn view(&mut self, frame: &mut Frame, area: Rect, is_focused: bool) {
+    pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let colors = get_colors();
 
-        let border_color = if is_focused {
+        let border_color = if self.is_focused {
             colors.border_active
         } else {
             colors.border_default
@@ -164,19 +210,22 @@ impl KeyList {
         frame.render_stateful_widget(list, area, &mut self.state);
     }
 
-    pub fn get_filtered_keys(&self) -> Vec<String> {
-        if self.filter.is_empty() {
+    fn get_filtered_keys(&self) -> Vec<String> {
+        if self.filter_pattern.is_empty() {
             self.keys.clone()
         } else {
             self.keys
                 .iter()
-                .filter(|key| key.to_lowercase().contains(&self.filter.to_lowercase()))
+                .filter(|key| {
+                    key.to_lowercase()
+                        .contains(&self.filter_pattern.to_lowercase())
+                })
                 .cloned()
                 .collect()
         }
     }
 
-    pub fn next(&mut self) {
+    fn next(&mut self) {
         if self.keys.is_empty() {
             return;
         }
@@ -193,7 +242,7 @@ impl KeyList {
         self.state.select(Some(i));
     }
 
-    pub fn previous(&mut self) {
+    fn previous(&mut self) {
         if self.keys.is_empty() {
             return;
         }
@@ -214,7 +263,7 @@ impl KeyList {
         self.state.selected().and_then(|i| self.keys.get(i))
     }
 
-    pub fn toggle_selection(&mut self) {
+    fn toggle_selection(&mut self) {
         if let Some(selected_idx) = self.state.selected() {
             let filtered_keys = self.get_filtered_keys();
             if let Some(key) = filtered_keys.get(selected_idx) {
@@ -248,14 +297,6 @@ impl KeyList {
         }
     }
 
-    pub fn clear_selection(&mut self) {
-        self.selected_keys.clear();
-    }
-
-    pub fn update_filter(&mut self, pattern: &str) {
-        self.filter = pattern.to_string();
-    }
-
     pub fn get_selected_key(&self) -> Option<String> {
         self.state
             .selected()
@@ -267,17 +308,6 @@ impl KeyList {
             self.get_selected_key().into_iter().collect()
         } else {
             self.selected_keys.iter().cloned().collect()
-        }
-    }
-
-    pub fn update_keys(&mut self, keys: Vec<String>) {
-        self.keys = keys;
-        self.selected_keys.clear();
-        self.is_loading = false;
-        if !self.get_filtered_keys().is_empty() {
-            self.state.select(Some(0));
-        } else {
-            self.state.select(None);
         }
     }
 }
