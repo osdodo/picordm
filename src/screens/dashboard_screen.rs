@@ -292,7 +292,12 @@ impl DashboardScreen {
                         })?;
 
                         for key in &keys_to_delete {
-                            let _ = get_redis_service().delete_key(key, db_index).await;
+                            if let Err(e) = get_redis_service().delete_key(key, db_index).await {
+                                self.footer.update(footer::Message::Error(Some(format!(
+                                    "Failed to delete key '{}': {}",
+                                    key, e
+                                ))));
+                            }
                         }
 
                         self.key_list.update(key_list::Message::ClearSelection);
@@ -516,7 +521,12 @@ impl DashboardScreen {
                     self.view(frame);
                 })?;
 
-                self.load_server_info().await;
+                if let Err(e) = self.load_server_info().await {
+                    self.footer.update(footer::Message::Error(Some(format!(
+                        "Failed to refresh server info: {}",
+                        e
+                    ))));
+                }
 
                 Ok(UpdateResult::Continue)
             }
@@ -662,23 +672,28 @@ impl DashboardScreen {
         }
     }
 
-    async fn load_server_info(&mut self) {
-        if let Ok((info, db_list)) = get_redis_service().get_server_info().await {
-            self.header
-                .update(header::Message::UpdateServerInfo(Some(info)));
-            self.db_selector
-                .update(db_selector::Message::UpdateDbList(db_list));
-        }
+    async fn load_server_info(&mut self) -> Result<()> {
+        let (info, db_list) = get_redis_service()
+            .get_server_info()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to fetch server info: {}", e))?;
+        
+        self.header
+            .update(header::Message::UpdateServerInfo(Some(info)));
+        self.db_selector
+            .update(db_selector::Message::UpdateDbList(db_list));
+        
+        Ok(())
     }
 
-    async fn load_keys(&mut self, pattern: &str, db_index: u32) -> Result<(), String> {
+    async fn load_keys(&mut self, pattern: &str, db_index: u32) -> Result<()> {
         get_redis_service()
             .get_keys(pattern, db_index)
             .await
             .map(|keys| {
                 self.key_list.update(key_list::Message::UpdateKeys(keys));
             })
-            .map_err(|e| format!("Failed to fetch keys: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to fetch keys: {}", e))
     }
 
     pub async fn load_data(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -689,10 +704,10 @@ impl DashboardScreen {
             self.view(frame);
         })?;
 
-        self.load_server_info().await;
+        self.load_server_info().await?;
 
         let db_index = self.db_selector.current_db_index;
-        self.load_keys("*", db_index).await.ok();
+        self.load_keys("*", db_index).await?;
 
         // Set focus state after loading data
         if self.view_mode == ViewMode::KeyList {
@@ -713,16 +728,20 @@ impl DashboardScreen {
 
         let pattern = self.get_search_pattern();
         if let Err(e) = self.load_keys(&pattern, db_index).await {
-            self.footer.update(footer::Message::Error(Some(e)));
+            self.footer.update(footer::Message::Error(Some(e.to_string())));
             self.key_list.update(key_list::Message::SetLoading(false));
         }
     }
 
     async fn refresh_data(&mut self, db_index: u32) {
-        self.load_server_info().await;
+        if let Err(e) = self.load_server_info().await {
+            self.footer.update(footer::Message::Error(Some(e.to_string())));
+        }
 
         let pattern = self.get_search_pattern();
-        self.load_keys(&pattern, db_index).await.ok();
+        if let Err(e) = self.load_keys(&pattern, db_index).await {
+            self.footer.update(footer::Message::Error(Some(e.to_string())));
+        }
     }
 
     pub async fn disconnect(&mut self) {

@@ -445,7 +445,6 @@ impl RedisService {
         .await
     }
 
-    // Type-specific getters for export
     pub async fn get_list_values(&self, key: &str, db_index: u32) -> Result<Vec<String>> {
         let key = key.to_string();
         self.with_db(db_index, |conn| {
@@ -508,7 +507,6 @@ impl RedisService {
         .await
     }
 
-    // Type-specific setters for import
     pub async fn set_list_values(&self, key: &str, values: &[String], db_index: u32) -> Result<()> {
         let key = key.to_string();
         let values = values.to_vec();

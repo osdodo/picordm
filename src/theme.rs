@@ -128,31 +128,58 @@ impl ThemeManager {
     }
 
     pub fn get_colors(&self) -> Arc<ThemeColors> {
-        self.colors.read().unwrap().clone()
+        self.colors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn get_theme(&self) -> Theme {
-        *self.current.read().unwrap()
+        *self
+            .current
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn get_enable_bg_transparent(&self) -> bool {
-        *self.enable_bg_transparent.read().unwrap()
+        *self
+            .enable_bg_transparent
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn set_theme(&self, theme: Theme) {
-        let enable_bg_transparent = *self.enable_bg_transparent.read().unwrap();
+        let enable_bg_transparent = *self
+            .enable_bg_transparent
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let colors =
             Arc::new(ThemeColors::from_theme(theme).with_transparency(enable_bg_transparent));
-        *self.current.write().unwrap() = theme;
-        *self.colors.write().unwrap() = colors;
+        *self
+            .current
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = theme;
+        *self
+            .colors
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = colors;
     }
 
     pub fn set_enable_bg_transparent(&self, enable_bg_transparent: bool) {
-        let theme = *self.current.read().unwrap();
+        let theme = *self
+            .current
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let colors =
             Arc::new(ThemeColors::from_theme(theme).with_transparency(enable_bg_transparent));
-        *self.enable_bg_transparent.write().unwrap() = enable_bg_transparent;
-        *self.colors.write().unwrap() = colors;
+        *self
+            .enable_bg_transparent
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = enable_bg_transparent;
+        *self
+            .colors
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = colors;
     }
 }
 
