@@ -349,19 +349,29 @@ impl RedisService {
         .await
     }
 
-    pub async fn delete_key(&self, key: &str, db_index: u32) -> Result<()> {
-        let key = key.to_string();
+    pub async fn delete_keys(&self, keys: &[String], db_index: u32) -> Result<u32> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let keys_owned = keys.to_vec();
         self.with_db(db_index, |conn| {
-            let key = key.clone();
+            let keys = keys_owned.clone();
             async move {
                 match conn {
                     ConnectionType::Standalone(mut c) => {
-                        let _: u32 = c.del(&key).await?;
-                        Ok(())
+                        // Use pipeline for better performance in standalone mode
+                        let mut pipe = redis::pipe();
+                        for key in &keys {
+                            pipe.del(key);
+                        }
+                        let results: Vec<u32> = pipe.query_async(&mut c).await?;
+                        Ok(results.iter().sum())
                     }
                     ConnectionType::Cluster(mut c) => {
-                        let _: u32 = c.del(&key).await?;
-                        Ok(())
+                        // DEL command supports multiple keys
+                        let deleted: u32 = c.del(&keys).await?;
+                        Ok(deleted)
                     }
                 }
             }

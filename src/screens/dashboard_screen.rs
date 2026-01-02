@@ -281,8 +281,6 @@ impl DashboardScreen {
                     self.confirm_dialog.update(msg);
                     let keys_to_delete = self.key_list.get_selected_keys();
                     if !keys_to_delete.is_empty() {
-                        let db_index = self.db_selector.current_db_index;
-
                         self.progress_dialog.update(progress_dialog::Message::Show(
                             "Deleting Keys".to_string(),
                             format!("Deleting {} keys...", keys_to_delete.len()),
@@ -291,11 +289,18 @@ impl DashboardScreen {
                             self.view(frame);
                         })?;
 
-                        for key in &keys_to_delete {
-                            if let Err(e) = get_redis_service().delete_key(key, db_index).await {
+                        let db_index = self.db_selector.current_db_index;
+                        match get_redis_service()
+                            .delete_keys(&keys_to_delete, db_index)
+                            .await
+                        {
+                            Ok(_deleted_count) => {
+                                self.footer.update(footer::Message::Error(None));
+                            }
+                            Err(e) => {
                                 self.footer.update(footer::Message::Error(Some(format!(
-                                    "Failed to delete key '{}': {}",
-                                    key, e
+                                    "Failed to delete keys: {}",
+                                    e
                                 ))));
                             }
                         }
@@ -677,12 +682,12 @@ impl DashboardScreen {
             .get_server_info()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch server info: {}", e))?;
-        
+
         self.header
             .update(header::Message::UpdateServerInfo(Some(info)));
         self.db_selector
             .update(db_selector::Message::UpdateDbList(db_list));
-        
+
         Ok(())
     }
 
@@ -728,19 +733,22 @@ impl DashboardScreen {
 
         let pattern = self.get_search_pattern();
         if let Err(e) = self.load_keys(&pattern, db_index).await {
-            self.footer.update(footer::Message::Error(Some(e.to_string())));
+            self.footer
+                .update(footer::Message::Error(Some(e.to_string())));
             self.key_list.update(key_list::Message::SetLoading(false));
         }
     }
 
     async fn refresh_data(&mut self, db_index: u32) {
         if let Err(e) = self.load_server_info().await {
-            self.footer.update(footer::Message::Error(Some(e.to_string())));
+            self.footer
+                .update(footer::Message::Error(Some(e.to_string())));
         }
 
         let pattern = self.get_search_pattern();
         if let Err(e) = self.load_keys(&pattern, db_index).await {
-            self.footer.update(footer::Message::Error(Some(e.to_string())));
+            self.footer
+                .update(footer::Message::Error(Some(e.to_string())));
         }
     }
 
