@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_CN.md)
 
-A lightweight Redis terminal management tool built with Rust and Ratatui.
+A lightweight, high-performance Redis terminal client built with Rust and Ratatui.
 
 <picture>
  <img alt="screenshot" src="screenshots/1.jpg">
@@ -10,85 +10,67 @@ A lightweight Redis terminal management tool built with Rust and Ratatui.
 
 ## Features
 
-- **Lightweight** - Fast performance with minimal memory usage
-- **Connection Management** - Multiple Redis connections with TLS/SSL support
-- **Redis Cluster** - Full support for Redis Cluster mode
-- **Quick Connection Switcher** - Fast connection switching
-- **Key Browser** - Search, filter, and manage Redis keys
-- **Server Monitoring** - Real-time server stats
-- **Command Interface** - Execute Redis commands directly
-- **Import/Export** - JSON data import/export with full Redis type support
-- **Theme Support** - Dark/Light theme
+- **High Performance** - Minimal memory footprint with native Rust performance
+- **Connection Management** - Multi-connection support with TLS/SSL and Redis Cluster
+- **Key Operations** - Browse, search, filter, and manage keys with full data type support
+- **Real-time Monitoring** - Live server statistics and metrics
+- **Command Execution** - Direct Redis command interface
+- **Data Migration** - JSON-based import/export for all Redis data types
+- **Customizable UI** - Dark/Light themes with transparency control
 
 ## Installation
 
-```bash
-brew tap osdodo/picordm
-brew install picordm
-```
-
-Or install directly:
+### Homebrew (macOS/Linux)
 
 ```bash
 brew install osdodo/picordm/picordm
 ```
 
-## Build from Source
+### From Source
 
 ```bash
+git clone https://github.com/osdodo/picordm.git
+cd picordm
 cargo build --release
 ./target/release/picordm
 ```
 
-## Note
+## Quick Start
 
-### Connection
+### Connection Setup
 
-- Press `i` to import connection from clipboard
-- Press `Tab` in connection form to switch between Standalone/Cluster mode
-- Supports: `redis://user:pass@host:port` and `redis-cli` command formats
-- Connection names are auto-generated from host/first node (e.g., `localhost`, `127.0.0.1-cluster`)
+Press `i` to import connection from clipboard. Supports both standalone and cluster modes with automatic name generation.
 
-**Standalone examples:**
-
-```
+**Standalone Mode:**
+```bash
 redis://localhost:6379
-rediss://admin:securepass@prod.redis.com:6380
-redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni prod.redis.com
+rediss://user:pass@host:6380
+redis-cli -u rediss://user:pass@host:6380 --tls --sni host
 ```
 
-**Cluster examples:**
-
-```
-redis://127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
-redis://user:pass@node1.redis.com:6379,node2.redis.com:6379,node3.redis.com:6379
-rediss://user:pass@prod1.redis.com:6379,prod2.redis.com:6379,prod3.redis.com:6379
+**Cluster Mode:**
+```bash
+redis://node1:6379,node2:6379,node3:6379
 redis-cli -c -h 127.0.0.1 -p 6379
 ```
 
-For `redis-cli -c` format, a single node is used as the cluster entry point. The client will automatically discover other nodes.
+Press `Tab` in the connection form to toggle between modes. See [Cluster Documentation](docs/CLUSTER.md) for setup details.
 
-For Redis Cluster setup, see [Cluster Documentation](docs/CLUSTER.md).
+### Key Bindings
 
-### Commands
+| Key | Action |
+|-----|--------|
+| `>` | Command mode |
+| `/` | Search keys |
+| `Esc` | Exit mode |
+| `Ctrl+t` | Switch connection |
+| `Ctrl+e` | Export data |
+| `Ctrl+l` | Import data |
+| `Ctrl+n` | Switch database |
+| `Ctrl+p` | Settings |
+| `F5` | Refresh stats |
 
-- `>` - Enter command mode
-- `/` - Search keys
-- `Esc` - Exit current mode
-- `Ctrl+t` - Quick connection switch
-- `Ctrl+e` - Export data
-- `Ctrl+l` - Import data
-- `Ctrl+n` - Switch database
-- `F5` - Refresh server stats
-- `F10` - Open settings (theme, transparency)
-
-### Copy Text
-
-To copy text from the interface, use your terminal's text selection feature:
-
-- **macOS (iTerm2/Terminal)**: Hold `Option/Alt` key and select text with mouse, then `Cmd+C` to copy
-- **Linux**: Hold `Shift` key and select text with mouse, then `Ctrl+Shift+C` to copy
-- **Windows**: Hold `Shift` key and select text with mouse, then right-click to copy
+**Text Selection:** Hold `Option/Alt` (macOS) or `Shift` (Linux/Windows) while selecting text, then copy using standard shortcuts.
 
 ## Documentation
 

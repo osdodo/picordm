@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_CN.md)
 
-一个使用 Rust 和 Ratatui 构建的轻量级 Redis 终端管理工具。
+基于 Rust 和 Ratatui 构建的轻量级高性能 Redis 终端客户端。
 
 <picture>
  <img alt="screenshot" src="screenshots/1.jpg">
@@ -10,86 +10,67 @@
 
 ## 特性
 
-- **轻量级** - 快速性能，最小内存占用
-- **连接管理** - 支持多个 Redis 连接和 TLS/SSL
-- **Redis 集群** - 完整支持 Redis 集群模式
-- **快速连接切换** - 快速切换连接
-- **键浏览器** - 搜索、过滤和管理 Redis 键
-- **服务器监控** - 实时服务器统计信息
-- **命令界面** - 直接执行 Redis 命令
-- **导入/导出** - JSON 数据导入/导出，支持所有 Redis 数据类型
-- **主题支持** - 深色/浅色主题
+- **高性能** - Rust 原生性能，极小内存占用
+- **连接管理** - 多连接支持，支持 TLS/SSL 和 Redis 集群
+- **键操作** - 浏览、搜索、过滤和管理键，支持所有数据类型
+- **实时监控** - 实时服务器统计信息和指标
+- **命令执行** - 直接执行 Redis 命令
+- **数据迁移** - 基于 JSON 的导入/导出，支持所有 Redis 数据类型
+- **自定义界面** - 深色/浅色主题，支持透明度调节
 
 ## 安装
 
-```bash
-brew tap osdodo/picordm
-brew install picordm
-```
-
-或直接安装：
+### Homebrew (macOS/Linux)
 
 ```bash
 brew install osdodo/picordm/picordm
 ```
 
-## 从源码构建
+### 从源码构建
 
 ```bash
+git clone https://github.com/osdodo/picordm.git
+cd picordm
 cargo build --release
 ./target/release/picordm
 ```
 
-## 使用说明
+## 快速开始
 
-### 连接
+### 连接配置
 
-- 按 `i` 从剪贴板导入连接
-- 在连接表单中按 `Tab` 在单机/集群模式之间切换
-- 支持格式：`redis://user:pass@host:port` 和 `redis-cli` 命令格式
-- 连接名称会根据主机/首个节点自动生成（例如：`localhost`、`127.0.0.1-cluster`）
+按 `i` 从剪贴板导入连接。支持单机和集群模式，自动生成连接名称。
 
-**单机模式示例：**
-
-```
+**单机模式：**
+```bash
 redis://localhost:6379
-rediss://admin:securepass@prod.redis.com:6380
-redis-cli -u rediss://admin:securepass@prod.redis.com:6380 --tls --sni prod.redis.com
+rediss://user:pass@host:6380
+redis-cli -u rediss://user:pass@host:6380 --tls --sni host
 ```
 
-**集群模式示例：**
-
-```
-redis://127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
-redis://user:pass@node1.redis.com:6379,node2.redis.com:6379,node3.redis.com:6379
-rediss://user:pass@prod1.redis.com:6379,prod2.redis.com:6379,prod3.redis.com:6379
+**集群模式：**
+```bash
+redis://node1:6379,node2:6379,node3:6379
 redis-cli -c -h 127.0.0.1 -p 6379
 ```
 
-对于 `redis-cli -c` 格式，单个节点将作为集群入口点。客户端会自动发现其他节点。
+在连接表单中按 `Tab` 切换模式。集群配置详见 [集群文档](docs/CLUSTER_CN.md)。
 
-Redis 集群设置请参阅 [集群文档](docs/CLUSTER_CN.md)。
+### 快捷键
 
+| 按键 | 功能 |
+|-----|------|
+| `>` | 命令模式 |
+| `/` | 搜索键 |
+| `Esc` | 退出模式 |
+| `Ctrl+t` | 切换连接 |
+| `Ctrl+e` | 导出数据 |
+| `Ctrl+l` | 导入数据 |
+| `Ctrl+n` | 切换数据库 |
+| `Ctrl+p` | 设置 |
+| `F5` | 刷新统计 |
 
-### 命令
-
-- `>` - 进入命令模式
-- `/` - 搜索键
-- `Esc` - 退出当前模式
-- `Ctrl+t` - 快速连接切换
-- `Ctrl+e` - 导出数据
-- `Ctrl+l` - 导入数据
-- `Ctrl+n` - 切换数据库
-- `F5` - 刷新服务器统计信息
-- `F10` - 打开设置（主题、透明度）
-
-### 复制文本
-
-要从界面复制文本，请使用终端的文本选择功能：
-
-- **macOS (iTerm2/Terminal)**：按住 `Option/Alt` 键并用鼠标选择文本，然后按 `Cmd+C` 复制
-- **Linux**：按住 `Shift` 键并用鼠标选择文本，然后按 `Ctrl+Shift+C` 复制
-- **Windows**：按住 `Shift` 键并用鼠标选择文本，然后右键复制
+**文本选择：** 按住 `Option/Alt`（macOS）或 `Shift`（Linux/Windows）选择文本，然后使用标准快捷键复制。
 
 ## 文档
 
