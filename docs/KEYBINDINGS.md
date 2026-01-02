@@ -5,7 +5,7 @@
 | Key      | Function         |
 | -------- | ---------------- |
 | `Ctrl+q` | Exit application |
-| `F10`    | Open settings    |
+| `Ctrl+p` | Open settings    |
 
 ## Dashboard Mode
 
@@ -139,7 +139,7 @@ Press `/` to enter search mode:
 
 ## Settings Dialog
 
-Press `F10` to open the Settings dialog:
+Press `Ctrl+p` to open the Settings dialog:
 
 | Key                | Function                    |
 | ------------------ | --------------------------- |

@@ -74,7 +74,7 @@ impl App {
             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return Ok(false);
             }
-            KeyCode::F(10) => {
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.settings_dialog.show();
                 return Ok(true);
             }
