@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -210,8 +210,9 @@ pub async fn import_redis_data<F>(
 where
     F: Fn(usize, usize) + Send + Sync,
 {
-    // Check file size (streaming read can handle larger files)
+    // Check file size
     const WARN_SIZE_MB: u64 = 200;
+    const STREAM_THRESHOLD_MB: u64 = 10;
 
     let metadata = fs::metadata(file_path)
         .with_context(|| format!("Failed to read file metadata: {:?}", file_path))?;
@@ -226,7 +227,23 @@ where
         );
     }
 
-    // Use streaming read to avoid loading the entire file into memory at once
+    // For large files, use streaming parsing; for small files, use the traditional method (which is faster).
+    if file_size_mb > STREAM_THRESHOLD_MB {
+        import_redis_data_streaming(file_path, database, overwrite, progress_callback).await
+    } else {
+        import_redis_data_traditional(file_path, database, overwrite, progress_callback).await
+    }
+}
+
+async fn import_redis_data_traditional<F>(
+    file_path: &Path,
+    database: u32,
+    overwrite: bool,
+    progress_callback: Option<F>,
+) -> Result<ImportResult>
+where
+    F: Fn(usize, usize) + Send + Sync,
+{
     let file = File::open(file_path)
         .with_context(|| format!("Failed to open Redis import file: {:?}", file_path))?;
     let reader = BufReader::new(file);
@@ -238,15 +255,12 @@ where
     let mut skipped_count = 0;
     let mut failed_keys = Vec::new();
 
-    // Use database from JSON file if specified, otherwise use the provided database parameter
     let target_database = import_data.database.unwrap_or(database);
 
-    // Concurrent import, processing 10 keys per batch
     const BATCH_SIZE: usize = 10;
     let keys_vec: Vec<_> = import_data.keys.into_iter().collect();
     let total_keys = keys_vec.len();
 
-    // Initialize progress to 0
     if let Some(ref callback) = progress_callback {
         callback(0, total_keys);
     }
@@ -259,7 +273,6 @@ where
             let key_data_clone = key_data.clone();
 
             tasks.push(tokio::spawn(async move {
-                // Check if key exists
                 let exists = if !overwrite {
                     get_redis_service()
                         .key_exists(&key_clone, target_database)
@@ -278,7 +291,6 @@ where
 
                 let result = import_redis_key(&key_clone, &key_data_clone, target_database).await;
 
-                // Set TTL if specified
                 if result.is_ok()
                     && let Some(ttl) = key_data_clone.ttl
                     && ttl > 0
@@ -292,12 +304,10 @@ where
             }));
         }
 
-        // Wait for the current batch to complete
         for task in tasks {
             match task.await {
                 Ok((_, Ok(_))) => {
                     imported_count += 1;
-
                     if let Some(ref callback) = progress_callback {
                         callback(imported_count + skipped_count, total_keys);
                     }
@@ -309,7 +319,6 @@ where
                         failed_keys.push((key, e.to_string()));
                         skipped_count += 1;
                     }
-
                     if let Some(ref callback) = progress_callback {
                         callback(imported_count + skipped_count, total_keys);
                     }
@@ -327,6 +336,327 @@ where
         skipped_count,
         failed_keys,
     })
+}
+
+async fn import_redis_data_streaming<F>(
+    file_path: &Path,
+    database: u32,
+    overwrite: bool,
+    progress_callback: Option<F>,
+) -> Result<ImportResult>
+where
+    F: Fn(usize, usize) + Send + Sync,
+{
+    let file = File::open(file_path)
+        .with_context(|| format!("Failed to open Redis import file: {:?}", file_path))?;
+    let reader = BufReader::new(file);
+
+    let mut imported_count = 0;
+    let mut skipped_count = 0;
+    let mut failed_keys = Vec::new();
+    let mut target_database = database;
+
+    // First, scan the files to obtain the total number of keys and database settings.
+    let (total_keys, file_database) = count_keys_in_file(file_path)?;
+    if let Some(db) = file_database {
+        target_database = db;
+    }
+
+    if let Some(ref callback) = progress_callback {
+        callback(0, total_keys);
+    }
+
+    // Streaming JSON parsing
+    let mut in_keys_section = false;
+    let mut current_key: Option<String> = None;
+    let mut current_value_lines: Vec<String> = Vec::new();
+    let mut pending_keys: Vec<(String, RedisKeyData)> = Vec::new();
+
+    const BATCH_SIZE: usize = 10;
+
+    for line_result in reader.lines() {
+        let line = line_result.context("Failed to read line")?;
+        let trimmed = line.trim();
+
+        // Detecting entry into the keys section
+        if !in_keys_section {
+            if trimmed.starts_with("\"keys\"") && trimmed.contains('{') {
+                in_keys_section = true;
+            }
+            continue;
+        }
+
+        // The key detection section ends: only } or },
+        if (trimmed == "}" || trimmed == "},") && current_key.is_none() {
+            break;
+        }
+
+        // Parse key-value pairs
+        if current_key.is_none() {
+            // Try parsing the new key
+            if let Some(key) = extract_key_name(trimmed) {
+                current_key = Some(key);
+                // Check if there are complete values ​​in the same row.
+                if let Some(start) = trimmed.find(": {") {
+                    let value_start = start + 2;
+                    current_value_lines.push(trimmed[value_start..].to_string());
+                }
+            }
+        } else {
+            current_value_lines.push(line.clone());
+
+            // Check if the value is complete (by detecting closed curly braces).
+            let combined = current_value_lines.join("\n");
+            if is_json_complete(&combined) {
+                if let Some(key) = current_key.take() {
+                    // Parse key data
+                    let clean_value = combined.trim().trim_end_matches(',');
+                    match serde_json::from_str::<RedisKeyData>(clean_value) {
+                        Ok(key_data) => {
+                            pending_keys.push((key, key_data));
+                        }
+                        Err(e) => {
+                            failed_keys.push((key, format!("Parse error: {}", e)));
+                            skipped_count += 1;
+                        }
+                    }
+                }
+                current_value_lines.clear();
+
+                // Batch processing
+                if pending_keys.len() >= BATCH_SIZE {
+                    let (imp, skip, failed) = process_key_batch(
+                        std::mem::take(&mut pending_keys),
+                        target_database,
+                        overwrite,
+                    )
+                    .await;
+                    imported_count += imp;
+                    skipped_count += skip;
+                    failed_keys.extend(failed);
+
+                    if let Some(ref callback) = progress_callback {
+                        callback(imported_count + skipped_count, total_keys);
+                    }
+                }
+            }
+        }
+    }
+
+    // Process the remaining keys
+    if !pending_keys.is_empty() {
+        let (imp, skip, failed) = process_key_batch(pending_keys, target_database, overwrite).await;
+        imported_count += imp;
+        skipped_count += skip;
+        failed_keys.extend(failed);
+
+        if let Some(ref callback) = progress_callback {
+            callback(imported_count + skipped_count, total_keys);
+        }
+    }
+
+    Ok(ImportResult {
+        imported_count,
+        skipped_count,
+        failed_keys,
+    })
+}
+
+/// Scan files to get the total number of keys and database settings
+fn count_keys_in_file(file_path: &Path) -> Result<(usize, Option<u32>)> {
+    let file = File::open(file_path)?;
+    let reader = BufReader::new(file);
+
+    let mut count = 0;
+    let mut database = None;
+    let mut in_keys_section = false;
+    let mut in_key_value = false;
+    let mut value_lines: Vec<String> = Vec::new();
+
+    for line_result in reader.lines() {
+        let line = line_result?;
+        let trimmed = line.trim();
+
+        // Parse database fields (before keys section)
+        if !in_keys_section
+            && trimmed.starts_with("\"database\"")
+            && let Some(db) = extract_database_value(trimmed)
+        {
+            database = Some(db);
+            continue;
+        }
+
+        // Detecting entry into the keys section
+        if !in_keys_section {
+            if trimmed.starts_with("\"keys\"") && trimmed.contains('{') {
+                in_keys_section = true;
+            }
+            continue;
+        }
+
+        // Collecting the value of a certain key
+        if in_key_value {
+            value_lines.push(line.clone());
+            let combined = value_lines.join("\n");
+            if is_json_complete(&combined) {
+                // The value is complete; increment the count by 1.
+                count += 1;
+                in_key_value = false;
+                value_lines.clear();
+            }
+            continue;
+        }
+
+        // The check indicates the end of the keys section (indentation level returns to the closing brackets of keys).
+        if trimmed == "}" || trimmed == "}," {
+            break;
+        }
+
+        // Start of detecting new key
+        if let Some(_key) = extract_key_name(trimmed) {
+            in_key_value = true;
+            // Extract the beginning part of value
+            if let Some(start) = trimmed.find(": {") {
+                let value_start = start + 2;
+                value_lines.push(trimmed[value_start..].to_string());
+                // Checking if they are on the same line completes the task.
+                let combined = value_lines.join("\n");
+                if is_json_complete(&combined) {
+                    count += 1;
+                    in_key_value = false;
+                    value_lines.clear();
+                }
+            }
+        }
+    }
+
+    Ok((count, database))
+}
+
+/// Extract key name from row
+fn extract_key_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('"') {
+        return None;
+    }
+
+    // Find the end of the key name
+    let rest = &trimmed[1..];
+    let end_quote = rest.find('"')?;
+    let key = &rest[..end_quote];
+
+    // Make sure it is followed by ": {"
+    let after_key = &rest[end_quote + 1..].trim_start();
+    if after_key.starts_with(": {") {
+        Some(key.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract database values ​​from rows
+fn extract_database_value(line: &str) -> Option<u32> {
+    // 格式: "database": 0,
+    let parts: Vec<&str> = line.split(':').collect();
+    if parts.len() >= 2 {
+        let value_part = parts[1].trim().trim_end_matches(',');
+        value_part.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// Check if the JSON string is complete (curly braces match)
+fn is_json_complete(s: &str) -> bool {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for ch in s.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth += 1,
+            '}' if !in_string => depth -= 1,
+            _ => {}
+        }
+    }
+
+    depth == 0 && s.trim().starts_with('{')
+}
+
+/// Batch processing keys
+async fn process_key_batch(
+    keys: Vec<(String, RedisKeyData)>,
+    database: u32,
+    overwrite: bool,
+) -> (usize, usize, Vec<(String, String)>) {
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut failed = Vec::new();
+
+    let mut tasks = Vec::new();
+
+    for (key, key_data) in keys {
+        let key_clone = key.clone();
+        let key_data_clone = key_data.clone();
+
+        tasks.push(tokio::spawn(async move {
+            let exists = if !overwrite {
+                get_redis_service()
+                    .key_exists(&key_clone, database)
+                    .await
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            if exists {
+                return (
+                    key_clone,
+                    Err(anyhow::anyhow!("Key exists and overwrite is false")),
+                );
+            }
+
+            let result = import_redis_key(&key_clone, &key_data_clone, database).await;
+
+            if result.is_ok()
+                && let Some(ttl) = key_data_clone.ttl
+                && ttl > 0
+            {
+                let _ = get_redis_service()
+                    .set_key_ttl(&key_clone, ttl, database)
+                    .await;
+            }
+
+            (key_clone, result)
+        }));
+    }
+
+    for task in tasks {
+        match task.await {
+            Ok((_, Ok(_))) => imported += 1,
+            Ok((key, Err(e))) => {
+                if e.to_string().contains("Key exists") {
+                    skipped += 1;
+                } else {
+                    failed.push((key, e.to_string()));
+                    skipped += 1;
+                }
+            }
+            Err(e) => {
+                failed.push(("unknown".to_string(), e.to_string()));
+                skipped += 1;
+            }
+        }
+    }
+
+    (imported, skipped, failed)
 }
 
 async fn import_redis_key(key: &str, key_data: &RedisKeyData, database: u32) -> Result<()> {

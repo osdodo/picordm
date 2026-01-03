@@ -57,7 +57,6 @@ pub enum UpdateResult {
 
 pub struct DashboardScreen {
     pub view_mode: ViewMode,
-
     pub header: Header,
     pub footer: Footer,
     pub key_list: KeyList,

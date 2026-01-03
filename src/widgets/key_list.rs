@@ -31,6 +31,50 @@ pub enum UpdateResult {
     Selected(String),
 }
 
+/// Filter the cache to avoid recalculating the filtering results on every render.
+struct FilterCache {
+    // Filtering mode for caching
+    pattern: String,
+    // Index of cached filtered results (index pointing to the original keys)
+    indices: Vec<usize>,
+    // Length of keys used to verify cache validity
+    keys_len: usize,
+}
+
+impl FilterCache {
+    fn new() -> Self {
+        Self {
+            pattern: String::new(),
+            indices: Vec::new(),
+            keys_len: 0,
+        }
+    }
+
+    /// Check if the cache is valid
+    fn is_valid(&self, pattern: &str, keys_len: usize) -> bool {
+        self.pattern == pattern && self.keys_len == keys_len
+    }
+
+    /// Update cache
+    fn update(&mut self, pattern: &str, keys: &[String]) {
+        self.pattern = pattern.to_string();
+        self.keys_len = keys.len();
+
+        if pattern.is_empty() {
+            // Without filtering, the index is 0..len
+            self.indices = (0..keys.len()).collect();
+        } else {
+            let pattern_lower = pattern.to_lowercase();
+            self.indices = keys
+                .iter()
+                .enumerate()
+                .filter(|(_, key)| key.to_lowercase().contains(&pattern_lower))
+                .map(|(i, _)| i)
+                .collect();
+        }
+    }
+}
+
 pub struct KeyList {
     pub state: ListState,
     pub keys: Vec<String>,
@@ -38,6 +82,7 @@ pub struct KeyList {
     pub filter_pattern: String,
     pub is_loading: bool,
     pub is_focused: bool,
+    filter_cache: FilterCache,
 }
 
 impl KeyList {
@@ -51,6 +96,7 @@ impl KeyList {
             filter_pattern: String::new(),
             is_loading: false,
             is_focused: false,
+            filter_cache: FilterCache::new(),
         }
     }
 
@@ -96,6 +142,7 @@ impl KeyList {
             }
             Message::UpdateFilter(pattern) => {
                 self.filter_pattern = pattern;
+                // The cache will be automatically updated the next time ensure_filter_cache is called.
                 UpdateResult::None
             }
             Message::SetLoading(loading) => {
@@ -106,7 +153,9 @@ impl KeyList {
                 self.keys = keys;
                 self.selected_keys.clear();
                 self.is_loading = false;
-                if !self.get_filtered_keys().is_empty() {
+                // Force update cache
+                self.ensure_filter_cache();
+                if !self.filter_cache.indices.is_empty() {
                     self.state.select(Some(0));
                 } else {
                     self.state.select(None);
@@ -149,9 +198,15 @@ impl KeyList {
             return;
         }
 
-        let filtered_keys = self.get_filtered_keys();
-        let items: Vec<ListItem> = filtered_keys
+        // Ensure cache is valid
+        self.ensure_filter_cache();
+
+        // Use cached indexes to directly reference keys
+        let items: Vec<ListItem> = self
+            .filter_cache
+            .indices
             .iter()
+            .filter_map(|&idx| self.keys.get(idx))
             .map(|key| {
                 let is_selected = self.selected_keys.contains(key);
                 let checkbox = if is_selected {
@@ -171,19 +226,19 @@ impl KeyList {
                     Style::default().fg(colors.text_primary)
                 };
 
-                ListItem::new(Line::from(vec![checkbox, Span::styled(key, key_style)]))
+                ListItem::new(Line::from(vec![
+                    checkbox,
+                    Span::styled(key.as_str(), key_style),
+                ]))
             })
             .collect();
 
+        let filtered_count = self.filter_cache.indices.len();
         let selected_count = self.selected_keys.len();
         let keys_title = if selected_count > 0 {
-            format!(
-                "Keys ({}) - {} selected",
-                filtered_keys.len(),
-                selected_count
-            )
+            format!("Keys ({}) - {} selected", filtered_count, selected_count)
         } else {
-            format!("Keys ({})", filtered_keys.len())
+            format!("Keys ({})", filtered_count)
         };
 
         let list = List::new(items)
@@ -210,28 +265,33 @@ impl KeyList {
         frame.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn get_filtered_keys(&self) -> Vec<String> {
-        if self.filter_pattern.is_empty() {
-            self.keys.clone()
-        } else {
-            self.keys
-                .iter()
-                .filter(|key| {
-                    key.to_lowercase()
-                        .contains(&self.filter_pattern.to_lowercase())
-                })
-                .cloned()
-                .collect()
+    /// Ensure the filter cache is valid; if invalid, update it.
+    fn ensure_filter_cache(&mut self) {
+        if !self
+            .filter_cache
+            .is_valid(&self.filter_pattern, self.keys.len())
+        {
+            self.filter_cache.update(&self.filter_pattern, &self.keys);
         }
     }
 
+    /// Retrieve filtered key references.
+    fn get_filtered_key_at(&self, index: usize) -> Option<&String> {
+        self.filter_cache
+            .indices
+            .get(index)
+            .and_then(|&idx| self.keys.get(idx))
+    }
+
     fn next(&mut self) {
-        if self.keys.is_empty() {
+        self.ensure_filter_cache();
+        let filtered_len = self.filter_cache.indices.len();
+        if filtered_len == 0 {
             return;
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.keys.len() - 1 {
+                if i >= filtered_len - 1 {
                     0
                 } else {
                     i + 1
@@ -243,13 +303,15 @@ impl KeyList {
     }
 
     fn previous(&mut self) {
-        if self.keys.is_empty() {
+        self.ensure_filter_cache();
+        let filtered_len = self.filter_cache.indices.len();
+        if filtered_len == 0 {
             return;
         }
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.keys.len() - 1
+                    filtered_len - 1
                 } else {
                     i - 1
                 }
@@ -260,50 +322,67 @@ impl KeyList {
     }
 
     fn selected_key(&self) -> Option<&String> {
-        self.state.selected().and_then(|i| self.keys.get(i))
+        self.state
+            .selected()
+            .and_then(|i| self.filter_cache.indices.get(i))
+            .and_then(|&idx| self.keys.get(idx))
     }
 
     fn toggle_selection(&mut self) {
         if let Some(selected_idx) = self.state.selected() {
-            let filtered_keys = self.get_filtered_keys();
-            if let Some(key) = filtered_keys.get(selected_idx) {
-                if self.selected_keys.contains(key) {
-                    self.selected_keys.remove(key);
+            let key_to_toggle = self
+                .filter_cache
+                .indices
+                .get(selected_idx)
+                .and_then(|&idx| self.keys.get(idx))
+                .cloned();
+
+            if let Some(key) = key_to_toggle {
+                if self.selected_keys.contains(&key) {
+                    self.selected_keys.remove(&key);
                 } else {
-                    self.selected_keys.insert(key.clone());
+                    self.selected_keys.insert(key);
                 }
             }
         }
     }
 
     fn select_all(&mut self) {
-        let filtered_keys = self.get_filtered_keys();
+        self.ensure_filter_cache();
+        let filtered_keys: Vec<&String> = self
+            .filter_cache
+            .indices
+            .iter()
+            .filter_map(|&idx| self.keys.get(idx))
+            .collect();
+
         // Check if all filtered keys are already selected
         let all_selected = !filtered_keys.is_empty()
             && filtered_keys
                 .iter()
-                .all(|key| self.selected_keys.contains(key));
+                .all(|key| self.selected_keys.contains(*key));
 
         if all_selected {
             // Deselect all filtered keys
             for key in &filtered_keys {
-                self.selected_keys.remove(key);
+                self.selected_keys.remove(*key);
             }
         } else {
             // Select all filtered keys
             for key in filtered_keys {
-                self.selected_keys.insert(key);
+                self.selected_keys.insert(key.clone());
             }
         }
     }
 
-    pub fn get_selected_key(&self) -> Option<String> {
+    pub fn get_selected_key(&mut self) -> Option<String> {
+        self.ensure_filter_cache();
         self.state
             .selected()
-            .and_then(|i| self.get_filtered_keys().get(i).cloned())
+            .and_then(|i| self.get_filtered_key_at(i).cloned())
     }
 
-    pub fn get_selected_keys(&self) -> Vec<String> {
+    pub fn get_selected_keys(&mut self) -> Vec<String> {
         if self.selected_keys.is_empty() {
             self.get_selected_key().into_iter().collect()
         } else {
